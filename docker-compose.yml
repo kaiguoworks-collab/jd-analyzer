@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16
+    container_name: jd-analyzer-db
+    environment:
+      POSTGRES_USER: jd
+      POSTGRES_PASSWORD: jd
+      POSTGRES_DB: jd_analyzer
+    ports:
+      - "5432:5432"
+    volumes:
+      - jd_pgdata:/var/lib/postgresql/data
+
+volumes:
+  jd_pgdata:

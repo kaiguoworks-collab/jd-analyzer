@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JD Analyzer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <p class="brand-kicker">Resume intelligence</p>
+            <h1>JD Analyzer</h1>
+          </div>
+        </div>
+        <p class="topbar-note">
+          Match a profile resume against one or more job descriptions.
+        </p>
+      </header>
+
+      <main class="workspace">
+        <aside class="pane pane-left">
+          <section class="card" id="profiles-card">
+            <div class="card-head">
+              <div>
+                <h2>Profiles</h2>
+                <p class="muted">Keep a resume for each career track.</p>
+              </div>
+              <button class="btn btn-ghost" type="button" id="add-profile-btn">
+                + New profile
+              </button>
+            </div>
+            <div class="profile-list" id="profile-list"></div>
+          </section>
+
+          <section class="card" id="resume-card">
+            <div class="card-head">
+              <div>
+                <h2>Resume</h2>
+                <p class="muted" id="resume-profile-label">Select a profile to attach a resume.</p>
+              </div>
+            </div>
+
+            <div class="upload-row">
+              <label class="btn btn-primary file-btn">
+                Upload resume
+                <input
+                  id="resume-file"
+                  type="file"
+                  accept=".pdf,.txt,.md,.doc,.docx,.rtf"
+                  hidden
+                />
+              </label>
+              <button class="btn btn-ghost" type="button" id="clear-resume-btn">
+                Clear
+              </button>
+            </div>
+
+            <label class="field-label" for="resume-text">Or paste resume text</label>
+            <textarea
+              id="resume-text"
+              class="input-area"
+              rows="5"
+              placeholder="Paste the resume for this profile…"
+            ></textarea>
+
+            <div class="resume-view" id="resume-view">
+              <div class="empty-state" id="resume-empty">
+                <strong>No resume yet</strong>
+                <span>Upload a file or paste text to preview it here.</span>
+              </div>
+              <div class="resume-preview hidden" id="resume-preview">
+                <div class="resume-meta" id="resume-meta"></div>
+                <iframe class="resume-frame hidden" id="resume-frame" title="Resume preview"></iframe>
+                <pre class="resume-body" id="resume-body"></pre>
+              </div>
+            </div>
+          </section>
+
+          <section class="card" id="keywords-card">
+            <div class="card-head">
+              <div>
+                <h2>Keyword scraping</h2>
+                <p class="muted">Terms pulled from the selected resume. Add or remove any tag.</p>
+              </div>
+              <button class="btn btn-ghost" type="button" id="rescrape-btn">
+                Scrape again
+              </button>
+            </div>
+            <div class="keyword-add">
+              <input
+                id="keyword-input"
+                class="text-input"
+                type="text"
+                placeholder="Add a keyword"
+              />
+              <button class="btn btn-primary" type="button" id="add-keyword-btn">
+                Add
+              </button>
+            </div>
+            <div class="keyword-cloud" id="keyword-cloud"></div>
+          </section>
+
+          <section class="card" id="logs-card">
+            <div class="card-head">
+              <div>
+                <h2>Activity log</h2>
+                <p class="muted">Saved locally in SQLite.</p>
+              </div>
+            </div>
+            <div class="log-list" id="log-list"></div>
+          </section>
+        </aside>
+
+        <section class="pane pane-right">
+          <section class="card" id="jd-card">
+            <div class="card-head">
+              <div>
+                <h2>Job descriptions</h2>
+                <p class="muted">Upload a file or paste a posting, then add it to the list.</p>
+              </div>
+            </div>
+
+            <div class="jd-composer">
+              <div class="upload-row">
+                <input
+                  id="jd-title"
+                  class="text-input"
+                  type="text"
+                  placeholder="Role title (optional)"
+                />
+                <label class="btn btn-ghost file-btn">
+                  Upload JD
+                  <input
+                    id="jd-file"
+                    type="file"
+                    accept=".pdf,.txt,.md,.doc,.docx,.rtf"
+                    hidden
+                  />
+                </label>
+              </div>
+              <textarea
+                id="jd-text"
+                class="input-area"
+                rows="8"
+                placeholder="Paste a job description here…"
+              ></textarea>
+              <div class="composer-actions">
+                <button class="btn btn-ghost" type="button" id="add-jd-btn">
+                  Add this JD
+                </button>
+                <span class="muted" id="jd-file-name"></span>
+              </div>
+            </div>
+
+            <div class="jd-list" id="jd-list"></div>
+          </section>
+
+          <div class="analyze-bar">
+            <button class="btn btn-analyze" type="button" id="analyze-btn">
+              Analyze match
+            </button>
+            <p class="muted" id="analyze-hint">
+              Results appear here after OpenAI compares the resume to each JD.
+            </p>
+          </div>
+
+          <section class="card results-card" id="results-card">
+            <div class="card-head">
+              <div>
+                <h2>Match results</h2>
+                <p class="muted" id="results-subtitle">
+                  Overall score plus keyword, experience, location, and work style.
+                </p>
+              </div>
+            </div>
+
+            <div class="empty-state" id="results-empty">
+              <strong>No analysis yet</strong>
+              <span>Select a profile, add at least one job description, then click Analyze match.</span>
+            </div>
+
+            <div class="results-body hidden" id="results-body">
+              <div class="jd-score-row" id="jd-score-row"></div>
+
+              <div class="scoreboard">
+                <div class="overall">
+                  <div class="ring" id="overall-ring">
+                    <span id="overall-value">0%</span>
+                  </div>
+                  <div>
+                    <p class="score-label">Overall match</p>
+                    <p class="muted" id="overall-caption">—</p>
+                  </div>
+                </div>
+
+                <div class="metric-list">
+                  <div class="metric">
+                    <div class="metric-head">
+                      <span>Keyword matching</span>
+                      <strong id="keyword-score">0%</strong>
+                    </div>
+                    <div class="bar"><span id="keyword-bar"></span></div>
+                  </div>
+                  <div class="metric">
+                    <div class="metric-head">
+                      <span>Experience level</span>
+                      <strong id="experience-score">0%</strong>
+                    </div>
+                    <div class="bar"><span id="experience-bar"></span></div>
+                  </div>
+                  <div class="metric">
+                    <div class="metric-head">
+                      <span>Location matching</span>
+                      <strong id="location-score">0%</strong>
+                    </div>
+                    <div class="bar"><span id="location-bar"></span></div>
+                  </div>
+                </div>
+              </div>
+
+              <article class="note-panel note-workstyle">
+                <h3>Work style</h3>
+                <p class="muted">Taken from the full job description, not just the title.</p>
+                <p class="workstyle-badge" id="workstyle-badge">Unspecified</p>
+                <p class="muted" id="workstyle-note"></p>
+              </article>
+
+              <article class="note-panel note-missing">
+                <h3>Missing keywords</h3>
+                <p class="muted">JD terms that are weak or absent on this resume.</p>
+                <div class="keyword-cloud" id="missing-keyword-cloud"></div>
+              </article>
+
+              <div class="split-notes">
+                <article class="note-panel note-strong">
+                  <h3>Strong match</h3>
+                  <ul id="strength-list"></ul>
+                </article>
+                <article class="note-panel note-weak">
+                  <h3>Weakness points</h3>
+                  <ul id="weakness-list"></ul>
+                </article>
+              </div>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <dialog class="modal" id="profile-modal">
+      <form method="dialog" id="profile-form">
+        <h2>New profile</h2>
+        <label class="field-label" for="profile-name">Profile name</label>
+        <input
+          id="profile-name"
+          class="text-input"
+          type="text"
+          placeholder="e.g. Backend engineer"
+          required
+        />
+        <div class="modal-actions">
+          <button class="btn btn-ghost" value="cancel" type="submit">Cancel</button>
+          <button class="btn btn-primary" value="confirm" type="submit">Create</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="app.js"></script>
+  </body>
+</html>
