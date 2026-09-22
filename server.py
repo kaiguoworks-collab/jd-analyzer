@@ -4,16 +4,22 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import webbrowser
 from io import BytesIO
 from pathlib import Path
+from threading import Thread
+from time import sleep
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
 from openai import OpenAI
 from pypdf import PdfReader
+from sqlalchemy import or_
 from werkzeug.utils import secure_filename
 
-from models import EventLog, Profile, db, new_id, utcnow
+from models import EventLog, JobDescription, Profile, db, new_id, utcnow
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env", override=True)
@@ -24,7 +30,8 @@ SYSTEM_PROMPT_PATH = ROOT / "prompts" / "system.txt"
 UPLOAD_ROOT = ROOT / "data" / "uploads"
 MAX_TEXT_CHARS = 20000
 MAX_JD_CHARS = 40000
-PUBLIC_FILES = {"index.html", "styles.css", "app.js"}
+PUBLIC_FILES = {"index.html", "styles.css", "app.js", "dashboard.html", "dashboard.js"}
+APPLICATION_OUTCOMES = ("applied", "on-going", "accepted", "rejected", "finished", "offer", "ghosted")
 
 
 def database_kind(url: str) -> str:
@@ -68,12 +75,29 @@ db.init_app(app)
 def init_db() -> None:
     from time import sleep
 
+    from sqlalchemy import inspect, text
     from sqlalchemy.exc import OperationalError
 
     last_error = None
     for attempt in range(20):
         try:
             db.create_all()
+            inspector = inspect(db.engine)
+            if "job_descriptions" in inspector.get_table_names():
+                columns = {col["name"] for col in inspector.get_columns("job_descriptions")}
+                for column_name in ("applied", "queued", "discarded"):
+                    if column_name not in columns:
+                        db.session.execute(
+                            text(
+                                f"ALTER TABLE job_descriptions ADD COLUMN {column_name} BOOLEAN DEFAULT FALSE"
+                            )
+                        )
+                        db.session.commit()
+                if "outcome" not in columns:
+                    db.session.execute(
+                        text("ALTER TABLE job_descriptions ADD COLUMN outcome VARCHAR(20) DEFAULT ''")
+                    )
+                    db.session.commit()
             return
         except OperationalError as error:
             last_error = error
@@ -348,6 +372,40 @@ def fallback_missing_keywords(resume_text: str, keywords: list, jd_text: str) ->
     return missing
 
 
+def looks_like_hostname(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    if not text or " " in text:
+        return False
+    host = text.split("/")[0]
+    return "." in host and not host.startswith("http")
+
+
+def format_job_heading(match, fallback=""):
+    company = str(match.get("company") or "").strip()
+    role = str(match.get("role") or match.get("jobTitle") or match.get("job_title") or "").strip()
+    title = str(match.get("title") or "").strip()
+    fallback = str(fallback or "").strip()
+
+    if looks_like_hostname(role) or role.lower() == fallback.lower():
+        role = ""
+    if looks_like_hostname(title) or title.lower() == fallback.lower():
+        title = ""
+
+    if company and role:
+        heading = f"{company} ({role})"
+    elif company and title and title.lower() != company.lower():
+        heading = f"{company} ({title})"
+    elif title:
+        heading = title
+    elif company:
+        heading = company
+    elif role:
+        heading = role
+    else:
+        heading = fallback
+    return " ".join(heading.split()) or fallback or "Job posting"
+
+
 def normalize_results(raw_results, job_descriptions, resume_text="", keywords=None):
     items = raw_results if isinstance(raw_results, list) else []
     keywords = keywords or []
@@ -369,10 +427,15 @@ def normalize_results(raw_results, job_descriptions, resume_text="", keywords=No
         missing_keywords = as_terms(match.get("missingKeywords") or match.get("missing_keywords"))
         if not missing_keywords:
             missing_keywords = fallback_missing_keywords(resume_text, keywords, jd.get("text", ""))
+        company = str(match.get("company") or "").strip()
+        role = str(match.get("role") or match.get("jobTitle") or match.get("job_title") or "").strip()
+        heading = format_job_heading(match, jd.get("title") or "")
         normalized.append(
             {
                 "id": jd["id"],
-                "title": jd["title"],
+                "company": company,
+                "role": role,
+                "title": heading,
                 "overall": clamp_score(match.get("overall")),
                 "keyword": clamp_score(match.get("keyword")),
                 "experience": clamp_score(match.get("experience")),
@@ -406,6 +469,109 @@ def get_profile_or_404(profile_id: str):
     if profile is None:
         return None, (jsonify({"error": "Profile not found."}), 404)
     return profile, None
+
+
+def get_job_or_404(job_id: str):
+    job = db.session.get(JobDescription, job_id)
+    if job is None:
+        return None, (jsonify({"error": "Job description not found."}), 404)
+    return job, None
+
+
+def persist_job(profile_id, payload, *, status=None, result=None, error=None):
+    if not profile_id or not isinstance(payload, dict):
+        return None
+    profile = db.session.get(Profile, profile_id)
+    if profile is None:
+        return None
+
+    job_id = str(payload.get("id") or "").strip() or new_id()
+    job = db.session.get(JobDescription, job_id)
+    if job is None:
+        job = JobDescription(id=job_id, profile_id=profile.id)
+        db.session.add(job)
+    elif job.profile_id != profile.id:
+        job = JobDescription(id=new_id(), profile_id=profile.id)
+        db.session.add(job)
+
+    if payload.get("url") is not None:
+        job.url = str(payload.get("url") or "")[:2000]
+    if payload.get("title"):
+        job.title = str(payload.get("title"))[:500]
+    if payload.get("company"):
+        job.company = str(payload.get("company"))[:300]
+    if payload.get("role"):
+        job.role = str(payload.get("role"))[:300]
+    if payload.get("text") is not None:
+        job.text = clip(payload.get("text"), MAX_JD_CHARS)
+    if status:
+        job.status = status
+    if error is not None:
+        job.error = str(error or "")[:2000]
+    if result is not None:
+        job.result = result
+        job.company = str(result.get("company") or job.company or "")[:300]
+        job.role = str(result.get("role") or job.role or "")[:300]
+        if result.get("title"):
+            job.title = str(result.get("title"))[:500]
+    if "applied" in payload:
+        job.applied = bool(payload.get("applied"))
+    if "queued" in payload:
+        job.queued = bool(payload.get("queued"))
+    if "discarded" in payload:
+        job.discarded = bool(payload.get("discarded"))
+    if "outcome" in payload:
+        value = str(payload.get("outcome") or "").strip()
+        job.outcome = value if value in APPLICATION_OUTCOMES else ""
+    if job.applied and not job.discarded and not job.outcome:
+        job.outcome = "applied"
+    if not job.applied and not job.discarded:
+        job.outcome = ""
+    job.updated_at = utcnow()
+    return job
+
+
+def persist_analyze_jobs(profile_id, job_descriptions, *, status, results=None, error=""):
+    saved = []
+    results_by_id = {
+        item.get("id"): item
+        for item in (results or [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    for jd in job_descriptions or []:
+        if not isinstance(jd, dict):
+            continue
+        result = results_by_id.get(jd.get("id")) if status == "completed" else None
+        job = persist_job(
+            profile_id,
+            jd,
+            status=status,
+            result=result,
+            error="" if status == "completed" else error,
+        )
+        if job:
+            saved.append(job)
+    return saved
+
+
+def job_payload_from_request(body):
+    payload = {
+        "id": body.get("id"),
+        "url": body.get("url") or "",
+        "title": body.get("title") or "",
+        "company": body.get("company") or "",
+        "role": body.get("role") or "",
+        "text": body.get("text") or "",
+    }
+    if "applied" in body:
+        payload["applied"] = bool(body.get("applied"))
+    if "queued" in body:
+        payload["queued"] = bool(body.get("queued"))
+    if "discarded" in body:
+        payload["discarded"] = bool(body.get("discarded"))
+    if "outcome" in body:
+        payload["outcome"] = body.get("outcome")
+    return payload
 
 
 def profile_upload_dir(profile_id: str) -> Path:
@@ -573,6 +739,231 @@ def list_logs():
     return jsonify({"logs": [entry.to_dict() for entry in logs]})
 
 
+@app.get("/api/profiles/<profile_id>/jobs")
+def list_jobs(profile_id: str):
+    profile, error = get_profile_or_404(profile_id)
+    if error:
+        return error
+    try:
+        limit = min(max(int(request.args.get("limit", 100)), 1), 100)
+    except (TypeError, ValueError):
+        limit = 100
+    jobs = db.session.execute(
+        db.select(JobDescription)
+        .where(JobDescription.profile_id == profile.id)
+        .order_by(JobDescription.updated_at.desc(), JobDescription.created_at.desc())
+        .limit(limit)
+    ).scalars()
+    return jsonify({"jobs": [job.to_dict() for job in jobs]})
+
+
+@app.get("/api/profiles/<profile_id>/apply-history")
+def apply_history(profile_id: str):
+    profile, error = get_profile_or_404(profile_id)
+    if error:
+        return error
+    jobs = db.session.execute(
+        db.select(JobDescription)
+        .where(JobDescription.profile_id == profile.id)
+        .where(or_(JobDescription.applied.is_(True), JobDescription.discarded.is_(True)))
+        .order_by(JobDescription.updated_at.desc(), JobDescription.created_at.desc())
+    ).scalars()
+    return jsonify({"jobs": [job.to_dict() for job in jobs]})
+
+
+@app.get("/api/dashboard/jobs")
+def dashboard_jobs():
+    rows = db.session.execute(
+        db.select(JobDescription, Profile)
+        .join(Profile, JobDescription.profile_id == Profile.id)
+        .where(or_(JobDescription.applied.is_(True), JobDescription.discarded.is_(True)))
+        .order_by(JobDescription.updated_at.desc(), JobDescription.created_at.desc())
+    ).all()
+    jobs = []
+    for job, profile in rows:
+        item = job.to_dict()
+        item["profileName"] = profile.name
+        item["listStatus"] = "discarded" if job.discarded else "applied"
+        jobs.append(item)
+    return jsonify({"jobs": jobs, "outcomes": list(APPLICATION_OUTCOMES)})
+
+
+@app.patch("/api/jobs/<job_id>/outcome")
+def update_job_outcome(job_id: str):
+    job, error = get_job_or_404(job_id)
+    if error:
+        return error
+    body = request.get_json(silent=True) or {}
+    value = str(body.get("outcome") or "").strip()
+    if value not in APPLICATION_OUTCOMES:
+        return jsonify({"error": "Choose applied, on-going, accepted, rejected, finished, offer, or ghosted."}), 400
+    if not job.applied or job.discarded:
+        return jsonify({"error": "Application status is only for applied jobs."}), 400
+    job.outcome = value
+    job.updated_at = utcnow()
+    db.session.commit()
+    return jsonify({"job": job.to_dict()})
+
+
+@app.post("/api/profiles/<profile_id>/jobs")
+def upsert_job(profile_id: str):
+    profile, error = get_profile_or_404(profile_id)
+    if error:
+        return error
+    body = request.get_json(silent=True) or {}
+    status = str(body.get("status") or "analyzing")
+    if status not in {"analyzing", "completed", "failed"}:
+        status = "analyzing"
+    result = body.get("result") if isinstance(body.get("result"), dict) else None
+    job = persist_job(
+        profile.id,
+        job_payload_from_request(body),
+        status=status,
+        result=result,
+        error=body.get("error") or "",
+    )
+    if job is None:
+        return jsonify({"error": "Could not save job description."}), 500
+    db.session.commit()
+    return jsonify({"job": job.to_dict()}), 201
+
+
+@app.delete("/api/jobs/<job_id>")
+def delete_job(job_id: str):
+    job, error = get_job_or_404(job_id)
+    if error:
+        return error
+    title = job.title or "Job posting"
+    profile_id = job.profile_id
+    db.session.delete(job)
+    db.session.commit()
+    add_log("job_discarded", f'Discarded "{title}".', profile_id)
+    return jsonify({"ok": True})
+
+
+def send_previous_tab_hotkey() -> None:
+    if os.name != "nt":
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    INPUT_KEYBOARD = 1
+    KEYEVENTF_KEYUP = 0x0002
+    vk_control, vk_shift, vk_tab = 0x11, 0x10, 0x09
+    extra = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
+
+    class KEYBDINPUT(ctypes.Structure):
+        _fields_ = (
+            ("wVk", wintypes.WORD),
+            ("wScan", wintypes.WORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", extra),
+        )
+
+    class INPUT(ctypes.Structure):
+        _fields_ = (
+            ("type", wintypes.DWORD),
+            ("_padding", wintypes.DWORD),
+            ("ki", KEYBDINPUT),
+        ) if ctypes.sizeof(ctypes.c_void_p) == 8 else (
+            ("type", wintypes.DWORD),
+            ("ki", KEYBDINPUT),
+        )
+
+    def send(vk, flags=0):
+        inp = INPUT()
+        inp.type = INPUT_KEYBOARD
+        inp.ki = KEYBDINPUT(vk, 0, flags, 0, 0)
+        user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+
+    foreground = user32.GetForegroundWindow()
+    our_thread = kernel32.GetCurrentThreadId()
+    other_thread = user32.GetWindowThreadProcessId(foreground, None)
+    attached = False
+    if other_thread and other_thread != our_thread:
+        attached = bool(user32.AttachThreadInput(our_thread, other_thread, True))
+    try:
+        send(vk_control)
+        send(vk_shift)
+        send(vk_tab)
+        send(vk_tab, KEYEVENTF_KEYUP)
+        send(vk_shift, KEYEVENTF_KEYUP)
+        send(vk_control, KEYEVENTF_KEYUP)
+    finally:
+        if attached:
+            user32.AttachThreadInput(our_thread, other_thread, False)
+
+
+def find_browser_exe() -> str | None:
+    candidates = [
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%PROGRAMFILES%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%PROGRAMFILES(X86)%\Microsoft\Edge\Application\msedge.exe"),
+    ]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return shutil.which("chrome") or shutil.which("msedge")
+
+
+def open_one_url(url: str) -> None:
+    if os.name == "nt":
+        exe = find_browser_exe()
+        if exe:
+            subprocess.Popen(
+                [exe, url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return
+        try:
+            os.startfile(url)
+            return
+        except OSError:
+            subprocess.run(
+                ["cmd", "/c", "start", "", url],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return
+    webbrowser.open(url, new=2, autoraise=True)
+
+
+def open_urls_in_tabs(urls: list[str]) -> None:
+    for index, url in enumerate(urls):
+        open_one_url(url)
+        if index < len(urls) - 1:
+            sleep(0.9)
+
+
+@app.post("/api/open-apply")
+def open_apply():
+    body = request.get_json(silent=True) or {}
+    raw_urls = body.get("urls") if isinstance(body.get("urls"), list) else [body.get("url")]
+    urls = []
+    seen = set()
+    for item in raw_urls:
+        url = str(item or "").strip()
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        urls.append(url)
+    if not urls:
+        return jsonify({"error": "This JD has no valid apply link."}), 400
+    Thread(target=open_urls_in_tabs, args=(urls,), daemon=True).start()
+    return jsonify({"ok": True, "opened": len(urls)})
+
+
 @app.post("/api/extract-text")
 def extract_text():
     uploaded = request.files.get("file")
@@ -615,6 +1006,9 @@ def analyze():
     if not isinstance(job_descriptions, list) or not job_descriptions:
         return jsonify({"error": "At least one job description is required."}), 400
 
+    persist_analyze_jobs(profile_id, job_descriptions, status="analyzing")
+    db.session.commit()
+
     payload = {
         "profileName": profile_name,
         "keywords": keywords,
@@ -642,6 +1036,9 @@ def analyze():
                     "role": "user",
                     "content": (
                         "Analyze this resume against each full job description.\n"
+                        "Extract company and role from the JD text. The input title may be a "
+                        "placeholder or hostname; never copy a website hostname as the job title. "
+                        "Return title as '{company} ({role})', e.g. 'OpenAI (Senior AI Engineer)'.\n"
                         "For workStyle, read the entire JD text (location, requirements, "
                         "eligibility, legal, and footnotes), not the title or header alone. "
                         "If a later section names a US state, city, office days, or hybrid "
@@ -653,11 +1050,14 @@ def analyze():
         )
         content = completion.choices[0].message.content
         if not content:
-            return jsonify({"error": "OpenAI returned an empty response."}), 502
+            raise RuntimeError("OpenAI returned an empty response.")
 
         parsed = json.loads(content)
         raw_results = parsed.get("results", parsed) if isinstance(parsed, dict) else parsed
         results = normalize_results(raw_results, payload["jobDescriptions"], resume_text, keywords)
+        saved = persist_analyze_jobs(
+            profile_id, job_descriptions, status="completed", results=results
+        )
         add_log(
             "analyze",
             f'Analyzed "{profile_name}" against {len(results)} JD{"s" if len(results) != 1 else ""}.',
@@ -678,8 +1078,11 @@ def analyze():
                 ],
             },
         )
-        return jsonify({"results": results})
+        return jsonify({"results": results, "jobs": [job.to_dict() for job in saved]})
     except Exception as error:
+        persist_analyze_jobs(
+            profile_id, job_descriptions, status="failed", error=str(error)
+        )
         add_log(
             "analyze_error",
             f'Analyze failed for "{profile_name}".',
@@ -692,6 +1095,11 @@ def analyze():
 @app.get("/")
 def index():
     return send_from_directory(ROOT, "index.html")
+
+
+@app.get("/dashboard")
+def dashboard():
+    return send_from_directory(ROOT, "dashboard.html")
 
 
 @app.get("/<path:filename>")

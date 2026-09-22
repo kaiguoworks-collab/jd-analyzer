@@ -22,9 +22,15 @@
             <h1>JD Analyzer</h1>
           </div>
         </div>
-        <p class="topbar-note">
-          Match a profile resume against one or more job descriptions.
-        </p>
+        <div class="topbar-end">
+          <nav class="top-nav" aria-label="Primary">
+            <a class="nav-link is-active" href="/">Analyzer</a>
+            <a class="nav-link" href="/dashboard">Dashboard</a>
+          </nav>
+          <p class="topbar-note">
+            Match a profile resume against one or more job descriptions.
+          </p>
+        </div>
       </header>
 
       <main class="workspace">
@@ -85,40 +91,6 @@
               </div>
             </div>
           </section>
-
-          <section class="card" id="keywords-card">
-            <div class="card-head">
-              <div>
-                <h2>Keyword scraping</h2>
-                <p class="muted">Terms pulled from the selected resume. Add or remove any tag.</p>
-              </div>
-              <button class="btn btn-ghost" type="button" id="rescrape-btn">
-                Scrape again
-              </button>
-            </div>
-            <div class="keyword-add">
-              <input
-                id="keyword-input"
-                class="text-input"
-                type="text"
-                placeholder="Add a keyword"
-              />
-              <button class="btn btn-primary" type="button" id="add-keyword-btn">
-                Add
-              </button>
-            </div>
-            <div class="keyword-cloud" id="keyword-cloud"></div>
-          </section>
-
-          <section class="card" id="logs-card">
-            <div class="card-head">
-              <div>
-                <h2>Activity log</h2>
-                <p class="muted">Saved locally in SQLite.</p>
-              </div>
-            </div>
-            <div class="log-list" id="log-list"></div>
-          </section>
         </aside>
 
         <section class="pane pane-right">
@@ -126,28 +98,17 @@
             <div class="card-head">
               <div>
                 <h2>Job descriptions</h2>
-                <p class="muted">Upload a file or paste a posting, then add it to the list.</p>
+                <p class="muted">Last 100 analyses for the selected profile.</p>
               </div>
             </div>
 
             <div class="jd-composer">
-              <div class="upload-row">
-                <input
-                  id="jd-title"
-                  class="text-input"
-                  type="text"
-                  placeholder="Role title (optional)"
-                />
-                <label class="btn btn-ghost file-btn">
-                  Upload JD
-                  <input
-                    id="jd-file"
-                    type="file"
-                    accept=".pdf,.txt,.md,.doc,.docx,.rtf"
-                    hidden
-                  />
-                </label>
-              </div>
+              <input
+                id="jd-url"
+                class="text-input"
+                type="url"
+                placeholder="Paste JD link (https://…)"
+              />
               <textarea
                 id="jd-text"
                 class="input-area"
@@ -155,43 +116,50 @@
                 placeholder="Paste a job description here…"
               ></textarea>
               <div class="composer-actions">
-                <button class="btn btn-ghost" type="button" id="add-jd-btn">
-                  Add this JD
+                <button class="btn btn-analyze" type="button" id="add-jd-btn">
+                  Analyze
                 </button>
-                <span class="muted" id="jd-file-name"></span>
               </div>
+              <p class="muted" id="analyze-hint">
+                Each Analyze click adds the JD and starts scoring against the selected resume.
+              </p>
             </div>
 
+            <div class="bulk-bar hidden" id="jd-bulk-bar">
+              <label class="select-all">
+                <input type="checkbox" id="jd-select-all" />
+                Select all
+              </label>
+              <span class="muted" id="jd-bulk-count">0 selected</span>
+              <div class="bulk-actions">
+                <button class="btn btn-analyze" type="button" id="jd-bulk-apply">Apply</button>
+                <button class="btn btn-ghost btn-plus" type="button" id="jd-bulk-plus">+</button>
+                <button class="btn btn-ghost" type="button" id="jd-bulk-discard">Discard</button>
+              </div>
+            </div>
             <div class="jd-list" id="jd-list"></div>
           </section>
-
-          <div class="analyze-bar">
-            <button class="btn btn-analyze" type="button" id="analyze-btn">
-              Analyze match
-            </button>
-            <p class="muted" id="analyze-hint">
-              Results appear here after OpenAI compares the resume to each JD.
-            </p>
-          </div>
 
           <section class="card results-card" id="results-card">
             <div class="card-head">
               <div>
                 <h2>Match results</h2>
-                <p class="muted" id="results-subtitle">
-                  Overall score plus keyword, experience, location, and work style.
-                </p>
+                <div class="results-title-row">
+                  <p class="muted" id="results-subtitle">
+                    Overall score plus keyword, experience, location, and work style.
+                  </p>
+                  <div id="company-flag-slot"></div>
+                </div>
+                <a class="result-jd-link hidden" id="result-jd-link" target="_blank" rel="noopener noreferrer"></a>
               </div>
             </div>
 
             <div class="empty-state" id="results-empty">
               <strong>No analysis yet</strong>
-              <span>Select a profile, add at least one job description, then click Analyze match.</span>
+              <span>Paste a job description and click Analyze. Open a completed item for the full breakdown.</span>
             </div>
 
             <div class="results-body hidden" id="results-body">
-              <div class="jd-score-row" id="jd-score-row"></div>
-
               <div class="scoreboard">
                 <div class="overall">
                   <div class="ring" id="overall-ring">
@@ -252,10 +220,86 @@
                 </article>
               </div>
             </div>
+
+            <div class="result-actions hidden" id="result-actions">
+              <a class="btn btn-analyze" id="result-apply-btn" target="_blank" rel="noopener noreferrer">Apply</a>
+              <button class="btn btn-ghost btn-plus" type="button" id="result-plus-btn">+</button>
+              <button class="btn btn-ghost" type="button" id="result-discard-btn">Discard</button>
+            </div>
           </section>
         </section>
+
+        <aside class="pane pane-apply">
+          <section class="card selected-card" id="selected-card">
+            <div class="card-head">
+              <div>
+                <h2>Selected</h2>
+                <p class="muted" id="selected-count">0 selected</p>
+              </div>
+              <label class="select-all hidden" id="selected-select-all-wrap">
+                <input type="checkbox" id="selected-select-all" />
+                Select all
+              </label>
+            </div>
+            <div class="selected-list" id="selected-list"></div>
+            <div class="selected-actions">
+              <button class="btn btn-analyze" type="button" id="selected-apply-btn">Apply</button>
+              <button class="btn btn-ghost" type="button" id="selected-backup-btn">BackUp</button>
+            </div>
+          </section>
+          <section class="card history-card history-applied">
+            <div class="card-head">
+              <div>
+                <h2>Applied JDs</h2>
+              </div>
+            </div>
+            <div class="bulk-bar hidden" id="applied-bulk-bar">
+              <label class="select-all">
+                <input type="checkbox" id="applied-select-all" />
+                Select all
+              </label>
+              <span class="muted" id="applied-bulk-count">0 selected</span>
+              <div class="bulk-actions">
+                <button class="btn btn-ghost" type="button" id="applied-bulk-backup">BackUp</button>
+                <button class="btn btn-ghost" type="button" id="applied-bulk-discard">Discard</button>
+              </div>
+            </div>
+            <div class="history-list" id="applied-history-list"></div>
+          </section>
+          <section class="card history-card history-discarded">
+            <div class="card-head">
+              <div>
+                <h2>Discarded JDs</h2>
+              </div>
+            </div>
+            <div class="bulk-bar hidden" id="discarded-bulk-bar">
+              <label class="select-all">
+                <input type="checkbox" id="discarded-select-all" />
+                Select all
+              </label>
+              <span class="muted" id="discarded-bulk-count">0 selected</span>
+              <div class="bulk-actions">
+                <button class="btn btn-analyze" type="button" id="discarded-bulk-apply">Apply</button>
+                <button class="btn btn-ghost" type="button" id="discarded-bulk-backup">BackUp</button>
+              </div>
+            </div>
+            <div class="history-list" id="discarded-history-list"></div>
+          </section>
+        </aside>
       </main>
     </div>
+
+    <dialog class="modal" id="apply-confirm-modal">
+      <form method="dialog" id="apply-confirm-form">
+        <h2 id="apply-confirm-title">Did you apply?</h2>
+        <p class="muted" id="apply-confirm-copy"></p>
+        <div class="apply-confirm-list hidden" id="apply-confirm-list"></div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" value="cancel" type="submit" id="apply-confirm-no">No</button>
+          <button class="btn btn-primary" value="confirm" type="submit" id="apply-confirm-yes">Yes</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog class="modal" id="profile-modal">
       <form method="dialog" id="profile-form">

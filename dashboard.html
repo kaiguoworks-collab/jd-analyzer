@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard · JD Analyzer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <p class="brand-kicker">Resume intelligence</p>
+            <h1>Dashboard</h1>
+          </div>
+        </div>
+        <div class="topbar-end">
+          <nav class="top-nav" aria-label="Primary">
+            <a class="nav-link" href="/">Analyzer</a>
+            <a class="nav-link is-active" href="/dashboard">Dashboard</a>
+          </nav>
+          <p class="topbar-note">Track applied and discarded jobs by profile.</p>
+        </div>
+      </header>
+
+      <main class="dashboard">
+        <section class="card dashboard-filter-card">
+          <div class="dashboard-filter">
+            <span class="field-label">Profile</span>
+            <div class="profile-filter-list" id="profile-filter-list"></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h2>Applied applications</h2>
+              <p class="muted">Jobs confirmed as applied, with current application status.</p>
+            </div>
+          </div>
+          <div class="dashboard-toolbar">
+            <input
+              class="text-input"
+              id="applied-search"
+              type="search"
+              placeholder="Search profile, company, role, status…"
+            />
+            <span class="muted" id="applied-count">0 rows</span>
+          </div>
+          <div class="dash-table-wrap">
+            <table class="dash-table" id="applied-table">
+              <thead>
+                <tr>
+                  <th data-key="number">No.</th>
+                  <th data-key="profileName"><button type="button">Profile</button></th>
+                  <th data-key="date"><button type="button">Date</button></th>
+                  <th data-key="company"><button type="button">Company name</button></th>
+                  <th data-key="role"><button type="button">Role name</button></th>
+                  <th data-key="listStatus"><button type="button">Status</button></th>
+                  <th data-key="outcome"><button type="button">Application status</button></th>
+                </tr>
+              </thead>
+              <tbody id="applied-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h2>Discarded JDs</h2>
+              <p class="muted">Jobs moved out of the active analyze list.</p>
+            </div>
+          </div>
+          <div class="dashboard-toolbar">
+            <input
+              class="text-input"
+              id="discarded-search"
+              type="search"
+              placeholder="Search profile, company, role…"
+            />
+            <span class="muted" id="discarded-count">0 rows</span>
+          </div>
+          <div class="dash-table-wrap">
+            <table class="dash-table" id="discarded-table">
+              <thead>
+                <tr>
+                  <th data-key="number">No.</th>
+                  <th data-key="profileName"><button type="button">Profile</button></th>
+                  <th data-key="date"><button type="button">Date</button></th>
+                  <th data-key="company"><button type="button">Company name</button></th>
+                  <th data-key="role"><button type="button">Role name</button></th>
+                  <th data-key="listStatus"><button type="button">Status</button></th>
+                </tr>
+              </thead>
+              <tbody id="discarded-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="dashboard.js"></script>
+  </body>
+</html>

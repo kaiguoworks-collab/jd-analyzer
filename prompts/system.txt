@@ -20,7 +20,9 @@ Return JSON only, with this shape:
   "results": [
     {
       "id": "use the job description id from the user message",
-      "title": "job title",
+      "company": "OpenAI",
+      "role": "Senior AI Engineer",
+      "title": "OpenAI (Senior AI Engineer)",
       "overall": 0,
       "keyword": 0,
       "experience": 0,
@@ -37,6 +39,9 @@ Return JSON only, with this shape:
 Rules:
 - Include one result object per job description, in the same order.
 - Copy each job description `id` exactly.
+- company is the hiring company from the JD body, not a careers-site hostname.
+- role is the job title / position from the JD (keep seniority if present).
+- title must be "{company} ({role})", e.g. "OpenAI (Senior AI Engineer)". Never use a website hostname as the title.
 - Scores must be integers from 0 to 100.
 - Be specific. Name skills, years, and locations instead of vague praise.
 - If information is missing, lower the relevant score and explain that in weaknesses.
