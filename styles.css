@@ -1186,8 +1186,40 @@ p {
   color: var(--ink);
 }
 
+.dash-table tbody tr.dash-row {
+  cursor: pointer;
+}
+
 .dash-table tbody tr:hover td {
   background: var(--surface-2);
+}
+
+.result-modal {
+  width: min(760px, 94vw);
+  max-height: min(88vh, 920px);
+  overflow: auto;
+}
+
+.result-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.result-modal-head h2 {
+  margin-bottom: 6px;
+}
+
+.result-modal .results-body {
+  padding-top: 4px;
+}
+
+@media (max-width: 720px) {
+  .result-modal .scoreboard {
+    grid-template-columns: 1fr;
+  }
 }
 
 .outcome-select {

@@ -576,6 +576,21 @@ async function queueJob(jd) {
   }
 }
 
+function isLocalAppHost() {
+  const host = window.location.hostname;
+  return host === "127.0.0.1" || host === "localhost" || host === "[::1]";
+}
+
+function openApplyUrlsHere(urls) {
+  let blocked = 0;
+  urls.forEach((url) => {
+    const opened = window.open(url, "_blank");
+    if (opened) opened.opener = null;
+    else blocked += 1;
+  });
+  return blocked;
+}
+
 function applyJobs(jobs, { reapply = false, event } = {}) {
   const ready = jobs.filter((jd) => jd.url && (reapply || !jd.applied));
   if (!ready.length) {
@@ -589,15 +604,25 @@ function applyJobs(jobs, { reapply = false, event } = {}) {
 
   const urls = ready.map((jd) => jd.url);
   const jobIds = ready.map((jd) => jd.id);
-  window.open(urls[0], "_blank");
-  if (urls.length > 1) {
-    fetch("/api/open-apply", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ urls: urls.slice(1) }),
-    }).catch((error) => {
-      els.analyzeHint.textContent = error.message || "Could not open every apply link.";
-    });
+  if (isLocalAppHost()) {
+    window.open(urls[0], "_blank");
+    if (urls.length > 1) {
+      fetch("/api/open-apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls: urls.slice(1) }),
+      }).catch((error) => {
+        els.analyzeHint.textContent = error.message || "Could not open every apply link.";
+      });
+    }
+  } else {
+    const blocked = openApplyUrlsHere(urls);
+    if (blocked) {
+      els.analyzeHint.textContent =
+        blocked === urls.length
+          ? "Browser blocked the apply tabs. Allow popups for this site, then click Apply again."
+          : `${blocked} extra apply tab${blocked === 1 ? " was" : "s were"} blocked. Allow popups for this site, then click Apply again.`;
+    }
   }
   ready.forEach((jd) => {
     jd.queued = false;

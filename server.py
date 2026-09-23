@@ -333,6 +333,51 @@ def normalize_work_style(value, jd_text: str) -> str:
     return infer_work_style(jd_text)
 
 
+def classify_work_mode(work_style: str, jd_text: str) -> str:
+    style = str(work_style or "").strip().lower()
+    if style and style not in WORK_STYLE_EMPTY:
+        has_remote = "remote" in style
+        has_hybrid = "hybrid" in style
+        has_onsite = any(
+            term in style
+            for term in ("onsite", "on-site", "on site", "in-office", "in office")
+        )
+        if has_remote and has_hybrid:
+            return "Remote or Hybrid"
+        if has_hybrid:
+            return "Hybrid"
+        if has_onsite and not has_remote:
+            return "Onsite"
+        if has_remote:
+            return "Remote"
+    return infer_work_mode((jd_text or "").lower()) or "Unspecified"
+
+
+def score_location_for_remote_only(model_score: int, mode: str) -> int:
+    if mode == "Remote":
+        return max(model_score, 90)
+    if mode == "Remote or Hybrid":
+        return min(max(model_score, 60), 80)
+    if mode == "Hybrid":
+        return min(model_score, 25)
+    if mode == "Onsite":
+        return min(model_score, 10)
+    return min(model_score, 40)
+
+
+def ensure_remote_location_weakness(weaknesses: list[str], mode: str) -> list[str]:
+    if mode in {"Remote", "Remote or Hybrid"}:
+        return weaknesses
+    blob = " ".join(weaknesses).lower()
+    if "remote" in blob and any(term in blob for term in ("only", "acceptable", "not fully", "unspecified")):
+        return weaknesses
+    if mode == "Unspecified":
+        weaknesses.append("Work style is unspecified, so this may not be a remote role.")
+    else:
+        weaknesses.append("Only remote roles are acceptable; this posting is not fully remote.")
+    return weaknesses
+
+
 def clamp_score(value) -> int:
     try:
         number = round(float(value))
@@ -430,20 +475,30 @@ def normalize_results(raw_results, job_descriptions, resume_text="", keywords=No
         company = str(match.get("company") or "").strip()
         role = str(match.get("role") or match.get("jobTitle") or match.get("job_title") or "").strip()
         heading = format_job_heading(match, jd.get("title") or "")
+        work_style = normalize_work_style(
+            match.get("workStyle") or match.get("work_style"),
+            jd.get("text", ""),
+        )
+        keyword = clamp_score(match.get("keyword"))
+        experience = clamp_score(match.get("experience"))
+        work_mode = classify_work_mode(work_style, jd.get("text", ""))
+        location = score_location_for_remote_only(
+            clamp_score(match.get("location")),
+            work_mode,
+        )
+        overall = clamp_score(round(keyword * 0.5 + experience * 0.3 + location * 0.2))
+        weaknesses = ensure_remote_location_weakness(weaknesses, work_mode)
         normalized.append(
             {
                 "id": jd["id"],
                 "company": company,
                 "role": role,
                 "title": heading,
-                "overall": clamp_score(match.get("overall")),
-                "keyword": clamp_score(match.get("keyword")),
-                "experience": clamp_score(match.get("experience")),
-                "location": clamp_score(match.get("location")),
-                "workStyle": normalize_work_style(
-                    match.get("workStyle") or match.get("work_style"),
-                    jd.get("text", ""),
-                ),
+                "overall": overall,
+                "keyword": keyword,
+                "experience": experience,
+                "location": location,
+                "workStyle": work_style,
                 "workStyleNote": str(match.get("workStyleNote") or match.get("work_style_note") or "").strip(),
                 "missingKeywords": missing_keywords,
                 "strengths": strengths or ["No strengths were returned."],
@@ -1042,7 +1097,10 @@ def analyze():
                         "For workStyle, read the entire JD text (location, requirements, "
                         "eligibility, legal, and footnotes), not the title or header alone. "
                         "If a later section names a US state, city, office days, or hybrid "
-                        "rule, that overrides a generic Remote label in the header.\n\n"
+                        "rule, that overrides a generic Remote label in the header.\n"
+                        "Every profile accepts remote roles only. Score location from that "
+                        "rule: fully remote high, hybrid/onsite low, unspecified low. "
+                        "Do not raise location because the resume city matches an office.\n\n"
                         + json.dumps(payload, indent=2)
                     ),
                 },
@@ -1114,4 +1172,4 @@ if __name__ == "__main__":
         print("OPENAI_API_KEY is empty. Add it to .env before analyzing.")
     print(f"JD Analyzer running at http://127.0.0.1:{PORT}")
     print(f"Database: {DATABASE_URL}")
-    app.run(host="127.0.0.1", port=PORT, debug=False)
+    app.run(host="0.0.0.0", port=PORT, debug=False)

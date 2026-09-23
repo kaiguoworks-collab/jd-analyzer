@@ -107,6 +107,83 @@
         </section>
       </main>
     </div>
+
+    <dialog class="modal result-modal" id="result-modal">
+      <div class="result-modal-head">
+        <div>
+          <h2 id="result-modal-title">Match results</h2>
+          <p class="muted" id="result-modal-subtitle"></p>
+          <a class="result-jd-link hidden" id="result-modal-link" target="_blank" rel="noopener noreferrer"></a>
+        </div>
+        <button class="btn btn-ghost" type="button" id="result-modal-close">Close</button>
+      </div>
+
+      <div class="empty-state hidden" id="result-modal-empty">
+        <strong>No analysis yet</strong>
+        <span>This job has no saved analyze result.</span>
+      </div>
+
+      <div class="results-body hidden" id="result-modal-body">
+        <div class="scoreboard">
+          <div class="overall">
+            <div class="ring" id="result-modal-overall-ring">
+              <span id="result-modal-overall-value">0%</span>
+            </div>
+            <div>
+              <p class="score-label">Overall match</p>
+              <p class="muted" id="result-modal-overall-caption">—</p>
+            </div>
+          </div>
+          <div class="metric-list">
+            <div class="metric">
+              <div class="metric-head">
+                <span>Keyword matching</span>
+                <strong id="result-modal-keyword-score">0%</strong>
+              </div>
+              <div class="bar"><span id="result-modal-keyword-bar"></span></div>
+            </div>
+            <div class="metric">
+              <div class="metric-head">
+                <span>Experience level</span>
+                <strong id="result-modal-experience-score">0%</strong>
+              </div>
+              <div class="bar"><span id="result-modal-experience-bar"></span></div>
+            </div>
+            <div class="metric">
+              <div class="metric-head">
+                <span>Location matching</span>
+                <strong id="result-modal-location-score">0%</strong>
+              </div>
+              <div class="bar"><span id="result-modal-location-bar"></span></div>
+            </div>
+          </div>
+        </div>
+
+        <article class="note-panel note-workstyle">
+          <h3>Work style</h3>
+          <p class="muted">Taken from the full job description, not just the title.</p>
+          <p class="workstyle-badge" id="result-modal-workstyle">Unspecified</p>
+          <p class="muted" id="result-modal-workstyle-note"></p>
+        </article>
+
+        <article class="note-panel note-missing">
+          <h3>Missing keywords</h3>
+          <p class="muted">JD terms that are weak or absent on this resume.</p>
+          <div class="keyword-cloud" id="result-modal-missing"></div>
+        </article>
+
+        <div class="split-notes">
+          <article class="note-panel note-strong">
+            <h3>Strong match</h3>
+            <ul id="result-modal-strengths"></ul>
+          </article>
+          <article class="note-panel note-weak">
+            <h3>Weakness points</h3>
+            <ul id="result-modal-weaknesses"></ul>
+          </article>
+        </div>
+      </div>
+    </dialog>
     <script src="dashboard.js"></script>
   </body>
 </html>

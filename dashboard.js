@@ -158,7 +158,7 @@ function renderSection(kind) {
           ? `<td>${outcomeSelect(job)}</td>`
           : "";
       return `
-        <tr>
+        <tr class="dash-row" data-job-id="${escapeHtml(job.id)}">
           <td>${index + 1}</td>
           <td>${escapeHtml(job.profileName || "—")}</td>
           <td>${escapeHtml(date)}</td>
@@ -303,8 +303,144 @@ document.getElementById("applied-body")?.addEventListener("change", async (event
   }
 });
 
+function jobHeading(job) {
+  const company = job.company || "";
+  const role = job.role || job.title || "";
+  if (company && role && role !== company) return `${company} (${role})`;
+  return role || company || "Job posting";
+}
+
+function setModalMetric(labelId, barId, value) {
+  const label = document.getElementById(labelId);
+  const bar = document.getElementById(barId);
+  const score = Number.isFinite(value) ? value : 0;
+  if (label) label.textContent = `${score}%`;
+  if (bar) {
+    bar.style.width = `${score}%`;
+    bar.style.background = score >= 75 ? "var(--teal)" : score >= 50 ? "var(--gold)" : "var(--rose)";
+  }
+}
+
+function setModalJdLink(url) {
+  const link = document.getElementById("result-modal-link");
+  if (!link) return;
+  if (!url) {
+    link.classList.add("hidden");
+    link.removeAttribute("href");
+    link.textContent = "";
+    return;
+  }
+  link.classList.remove("hidden");
+  link.href = url;
+  link.textContent = url;
+}
+
+function openResultModal(job) {
+  const modal = document.getElementById("result-modal");
+  const title = document.getElementById("result-modal-title");
+  const subtitle = document.getElementById("result-modal-subtitle");
+  const empty = document.getElementById("result-modal-empty");
+  const body = document.getElementById("result-modal-body");
+  if (!modal || !title || !subtitle || !empty || !body) return;
+
+  title.textContent = jobHeading(job);
+  subtitle.textContent = [
+    job.profileName || "Profile",
+    formatDate(job.updatedAt || job.createdAt),
+    listStatusLabel(job.listStatus),
+  ].join(" · ");
+  setModalJdLink(job.url);
+
+  const result = job.result;
+  if (!result || typeof result !== "object") {
+    empty.classList.remove("hidden");
+    body.classList.add("hidden");
+    if (job.status === "failed") {
+      empty.innerHTML = `<strong>Analyzing failed</strong><span>${escapeHtml(job.error || "The analysis did not complete.")}</span>`;
+    } else {
+      empty.innerHTML = `<strong>No analysis yet</strong><span>This job has no saved analyze result.</span>`;
+    }
+    if (!modal.open) modal.showModal();
+    return;
+  }
+
+  empty.classList.add("hidden");
+  body.classList.remove("hidden");
+
+  const overall = Number.isFinite(result.overall) ? result.overall : 0;
+  const overallValue = document.getElementById("result-modal-overall-value");
+  const overallRing = document.getElementById("result-modal-overall-ring");
+  const overallCaption = document.getElementById("result-modal-overall-caption");
+  if (overallValue) overallValue.textContent = `${overall}%`;
+  if (overallRing) {
+    overallRing.style.background = `conic-gradient(var(--teal) ${overall * 3.6}deg, var(--surface-2) 0deg)`;
+  }
+  if (overallCaption) {
+    overallCaption.textContent =
+      overall >= 75 ? "Strong overall fit" : overall >= 50 ? "Partial fit" : "Weak overall fit";
+  }
+
+  setModalMetric("result-modal-keyword-score", "result-modal-keyword-bar", result.keyword);
+  setModalMetric("result-modal-experience-score", "result-modal-experience-bar", result.experience);
+  setModalMetric("result-modal-location-score", "result-modal-location-bar", result.location);
+
+  const workStyle = result.workStyle || "Unspecified";
+  const workstyleBadge = document.getElementById("result-modal-workstyle");
+  const workstyleNote = document.getElementById("result-modal-workstyle-note");
+  if (workstyleBadge) {
+    workstyleBadge.textContent = workStyle;
+    workstyleBadge.dataset.style = workStyle;
+  }
+  if (workstyleNote) workstyleNote.textContent = result.workStyleNote || "";
+
+  const missing = Array.isArray(result.missingKeywords) ? result.missingKeywords : [];
+  const missingCloud = document.getElementById("result-modal-missing");
+  if (missingCloud) {
+    missingCloud.innerHTML = missing.length
+      ? missing.map((keyword) => `<span class="tag">${escapeHtml(keyword)}</span>`).join("")
+      : `<span class="muted">No missing keywords were identified.</span>`;
+  }
+
+  const strengths = document.getElementById("result-modal-strengths");
+  const weaknesses = document.getElementById("result-modal-weaknesses");
+  const strengthItems = Array.isArray(result.strengths) ? result.strengths : [];
+  const weaknessItems = Array.isArray(result.weaknesses) ? result.weaknesses : [];
+  if (strengths) {
+    strengths.innerHTML = strengthItems.length
+      ? strengthItems.map((item) => `<li>${escapeHtml(item)}</li>`).join("")
+      : "<li>No strengths were returned.</li>";
+  }
+  if (weaknesses) {
+    weaknesses.innerHTML = weaknessItems.length
+      ? weaknessItems.map((item) => `<li>${escapeHtml(item)}</li>`).join("")
+      : "<li>No weakness points were returned.</li>";
+  }
+
+  if (!modal.open) modal.showModal();
+}
+
+function bindRowClicks(bodyId) {
+  document.getElementById(bodyId)?.addEventListener("click", (event) => {
+    if (event.target.closest("select, button, a, input, label")) return;
+    const row = event.target.closest("tr[data-job-id]");
+    if (!row) return;
+    const job = state.jobs.find((item) => item.id === row.dataset.jobId);
+    if (job) openResultModal(job);
+  });
+}
+
+document.getElementById("result-modal-close")?.addEventListener("click", () => {
+  document.getElementById("result-modal")?.close();
+});
+
+document.getElementById("result-modal")?.addEventListener("click", (event) => {
+  if (event.target.id === "result-modal") event.currentTarget.close();
+});
+
 bindSort("applied-table", "applied");
 bindSort("discarded-table", "discarded");
+bindRowClicks("applied-body");
+bindRowClicks("discarded-body");
 
 loadDashboard().catch((error) => {
   const appliedBody = document.getElementById("applied-body");
