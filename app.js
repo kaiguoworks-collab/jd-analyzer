@@ -1,5 +1,3 @@
-// this is a script to analyze a resume and a job description to see if the resume is a good fit for the job
-
 const els = {
   profileList: document.getElementById("profile-list"),
   addProfileBtn: document.getElementById("add-profile-btn"),
