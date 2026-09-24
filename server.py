@@ -31,7 +31,7 @@ UPLOAD_ROOT = ROOT / "data" / "uploads"
 MAX_TEXT_CHARS = 20000
 MAX_JD_CHARS = 40000
 PUBLIC_FILES = {"index.html", "styles.css", "app.js", "dashboard.html", "dashboard.js"}
-APPLICATION_OUTCOMES = ("applied", "on-going", "accepted", "rejected", "finished", "offer", "ghosted")
+APPLICATION_OUTCOMES = ("applied", "replied", "on-going", "accepted", "rejected", "finished", "offer", "ghosted")
 
 
 def database_kind(url: str) -> str:
@@ -96,6 +96,12 @@ def init_db() -> None:
                 if "outcome" not in columns:
                     db.session.execute(
                         text("ALTER TABLE job_descriptions ADD COLUMN outcome VARCHAR(20) DEFAULT ''")
+                    )
+                    db.session.commit()
+                if "analyzed_at" not in columns:
+                    column_type = "DATETIME" if database_kind(DATABASE_URL) == "sqlite" else "TIMESTAMP"
+                    db.session.execute(
+                        text(f"ALTER TABLE job_descriptions ADD COLUMN analyzed_at {column_type}")
                     )
                     db.session.commit()
             return
@@ -605,6 +611,8 @@ def persist_analyze_jobs(profile_id, job_descriptions, *, status, results=None, 
             error="" if status == "completed" else error,
         )
         if job:
+            if status in {"completed", "failed"}:
+                job.analyzed_at = utcnow()
             saved.append(job)
     return saved
 
@@ -851,7 +859,7 @@ def update_job_outcome(job_id: str):
     body = request.get_json(silent=True) or {}
     value = str(body.get("outcome") or "").strip()
     if value not in APPLICATION_OUTCOMES:
-        return jsonify({"error": "Choose applied, on-going, accepted, rejected, finished, offer, or ghosted."}), 400
+        return jsonify({"error": "Choose applied, replied, on-going, accepted, rejected, finished, offer, or ghosted."}), 400
     if not job.applied or job.discarded:
         return jsonify({"error": "Application status is only for applied jobs."}), 400
     job.outcome = value

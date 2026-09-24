@@ -783,6 +783,10 @@ p {
   text-align: center;
 }
 
+.jd-item-actions .btn-reanalyze {
+  min-width: 92px;
+}
+
 .result-jd-link {
   display: block;
   margin-top: 6px;
@@ -808,6 +812,12 @@ p {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 14px;
+}
+
+.jd-analyzed-date {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
 }
 
 .result-actions {
@@ -1222,6 +1232,48 @@ p {
   }
 }
 
+.summary-body {
+  display: grid;
+  gap: 18px;
+}
+
+.summary-group h3 {
+  margin: 0 0 10px;
+  font-size: 18px;
+}
+
+.summary-keywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.summary-keyword {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f7f1e6;
+  color: #9a3412;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.summary-keyword b {
+  font-weight: 700;
+}
+
+.summary-keyword span {
+  color: #7c2d12;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-empty-line {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .outcome-select {
   appearance: none;
   min-width: 124px;
@@ -1249,6 +1301,11 @@ p {
 .outcome-select.outcome-applied {
   background-color: #dbeafe;
   color: #1e40af;
+}
+
+.outcome-select.outcome-replied {
+  background-color: #ccfbf1;
+  color: #0f766e;
 }
 
 .outcome-select.outcome-rejected {

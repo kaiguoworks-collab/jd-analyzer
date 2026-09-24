@@ -1,5 +1,6 @@
 const OUTCOME_LABELS = {
   applied: "Applied",
+  replied: "Replied",
   "on-going": "On-going",
   accepted: "Accepted",
   rejected: "Rejected",
@@ -428,6 +429,112 @@ function bindRowClicks(bodyId) {
     if (job) openResultModal(job);
   });
 }
+
+function appliedJobsForSummary() {
+  return state.jobs.filter(
+    (job) => job.listStatus === "applied" && state.selectedProfileIds.has(job.profileId)
+  );
+}
+
+function normalizeKeyword(value) {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function missingKeywordSummary(jobs) {
+  const total = jobs.length;
+  const counts = new Map();
+  jobs.forEach((job) => {
+    const seen = new Set();
+    const missing = Array.isArray(job.result?.missingKeywords) ? job.result.missingKeywords : [];
+    missing.forEach((item) => {
+      const label = normalizeKeyword(item);
+      if (!label) return;
+      const key = label.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      const current = counts.get(key);
+      if (current) current.count += 1;
+      else counts.set(key, { label, count: 1 });
+    });
+  });
+  const items = [...counts.values()].sort(
+    (a, b) => b.count - a.count || a.label.localeCompare(b.label)
+  );
+  const most = [];
+  const medium = [];
+  const others = [];
+  items.forEach((item) => {
+    const share = total ? item.count / total : 0;
+    if (share >= 0.3) most.push(item);
+    else if (share >= 0.1) medium.push(item);
+    else others.push(item);
+  });
+  return { total, most, medium, others };
+}
+
+function renderSummaryKeywords(containerId, items, total) {
+  const node = document.getElementById(containerId);
+  if (!node) return;
+  if (!items.length) {
+    node.innerHTML = `<span class="summary-empty-line">None</span>`;
+    return;
+  }
+  node.innerHTML = items
+    .map(
+      (item) =>
+        `<span class="summary-keyword"><b>'${escapeHtml(item.label)}'</b><span>${item.count}/${total}</span></span>`
+    )
+    .join("");
+}
+
+function openSummaryModal() {
+  const modal = document.getElementById("summary-modal");
+  const empty = document.getElementById("summary-empty");
+  const body = document.getElementById("summary-body");
+  const subtitle = document.getElementById("summary-subtitle");
+  if (!modal || !empty || !body || !subtitle) return;
+
+  const jobs = appliedJobsForSummary();
+  const summary = missingKeywordSummary(jobs);
+  subtitle.textContent = jobs.length
+    ? `Missing keywords across ${summary.total} applied job${summary.total === 1 ? "" : "s"} in the selected profiles.`
+    : "Missing keywords across applied jobs.";
+
+  if (!jobs.length) {
+    empty.classList.remove("hidden");
+    body.classList.add("hidden");
+    empty.innerHTML = `<strong>No applied jobs</strong><span>Apply to jobs first, or select a profile that has applied jobs.</span>`;
+    if (!modal.open) modal.showModal();
+    return;
+  }
+
+  if (!summary.most.length && !summary.medium.length && !summary.others.length) {
+    empty.classList.remove("hidden");
+    body.classList.add("hidden");
+    empty.innerHTML = `<strong>No missing keywords</strong><span>The selected applied jobs do not have saved missing-keyword results.</span>`;
+    if (!modal.open) modal.showModal();
+    return;
+  }
+
+  empty.classList.add("hidden");
+  body.classList.remove("hidden");
+  renderSummaryKeywords("summary-most", summary.most, summary.total);
+  renderSummaryKeywords("summary-medium", summary.medium, summary.total);
+  renderSummaryKeywords("summary-others", summary.others, summary.total);
+  if (!modal.open) modal.showModal();
+}
+
+document.getElementById("summary-btn")?.addEventListener("click", () => {
+  openSummaryModal();
+});
+
+document.getElementById("summary-modal-close")?.addEventListener("click", () => {
+  document.getElementById("summary-modal")?.close();
+});
+
+document.getElementById("summary-modal")?.addEventListener("click", (event) => {
+  if (event.target.id === "summary-modal") event.currentTarget.close();
+});
 
 document.getElementById("result-modal-close")?.addEventListener("click", () => {
   document.getElementById("result-modal")?.close();

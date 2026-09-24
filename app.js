@@ -942,6 +942,18 @@ function renderJobs() {
 
     const actions = document.createElement("div");
     actions.className = "jd-item-actions";
+    if (jd.status === "completed" || jd.status === "failed") {
+      const reanalyze = document.createElement("button");
+      reanalyze.type = "button";
+      reanalyze.className = "btn btn-ghost btn-reanalyze";
+      reanalyze.textContent = "Reanalyze";
+      reanalyze.disabled = !canReanalyze(jd);
+      reanalyze.addEventListener("click", (event) => {
+        event.stopPropagation();
+        reanalyzeJob(jd);
+      });
+      actions.appendChild(reanalyze);
+    }
     if (jd.status === "completed") {
       const apply = document.createElement("a");
       apply.className = `btn btn-analyze${jd.applied ? " is-applied" : ""}`;
@@ -993,10 +1005,10 @@ function scoreTone(value) {
 
 function jdStatusHtml(jd) {
   if (jd.status === "analyzing") {
-    return `<span class="jd-status analyzing"><span class="spinner" aria-hidden="true"></span> Analyzing…</span>`;
+    return `<div class="jd-item-meta"><span class="jd-status analyzing"><span class="spinner" aria-hidden="true"></span> Analyzing…</span>${analyzedDateHtml(jd)}</div>`;
   }
   if (jd.status === "failed") {
-    return `<span class="jd-status failed">Analyzing failed: ${escapeHtml(jd.error || "Unknown error")}</span>`;
+    return `<div class="jd-item-meta"><span class="jd-status failed">Analyzing failed: ${escapeHtml(jd.error || "Unknown error")}</span>${analyzedDateHtml(jd)}</div>`;
   }
   if (jd.status === "completed" && jd.result) {
     const location = Number.isFinite(jd.result.location) ? jd.result.location : 0;
@@ -1005,6 +1017,7 @@ function jdStatusHtml(jd) {
     return `
       <div class="jd-item-meta">
         <span class="jd-status completed">Completed</span>
+        ${analyzedDateHtml(jd)}
         <span class="jd-metrics">
           <span class="score-chip ${scoreTone(overall)}">Overall match ${overall}%</span>
           <span class="score-chip ${scoreTone(location)}"><span>${escapeHtml(workStyle)}</span><span>${location}%</span></span>
@@ -1013,6 +1026,46 @@ function jdStatusHtml(jd) {
     `;
   }
   return `<span class="jd-status">Waiting</span>`;
+}
+
+function formatAnalyzedAt(jd) {
+  const raw = jd?.analyzedAt || "";
+  const fallback =
+    jd?.status === "completed" || jd?.status === "failed" ? jd?.createdAt || "" : "";
+  const date = new Date(raw || fallback);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function analyzedDateHtml(jd) {
+  const label = formatAnalyzedAt(jd);
+  if (!label) return "";
+  return `<span class="jd-analyzed-date">Analyzed ${escapeHtml(label)}</span>`;
+}
+
+function canReanalyze(jd) {
+  const profile = activeProfile();
+  return Boolean(jd?.text && profile && String(profile.resumeText || "").trim());
+}
+
+async function reanalyzeJob(jd) {
+  const profile = activeProfile();
+  if (!canReanalyze(jd)) {
+    els.analyzeHint.textContent = jd?.text
+      ? "Add resume text to the selected profile first."
+      : "This JD has no text to reanalyze.";
+    return;
+  }
+  if (jd.status === "analyzing") return;
+  state.selectedResultId = jd.id;
+  els.analyzeHint.textContent = `Reanalyzing ${jdLabel(jd)}…`;
+  await analyzeJob(jd, profile);
 }
 
 function setResultJdLink(jd) {

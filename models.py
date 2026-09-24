@@ -93,6 +93,7 @@ class JobDescription(db.Model):
     queued = db.Column(db.Boolean, default=False, nullable=False)
     discarded = db.Column(db.Boolean, default=False, nullable=False)
     outcome = db.Column(db.String(20), default="", nullable=False)
+    analyzed_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
     profile = db.relationship("Profile", back_populates="job_descriptions")
@@ -113,6 +114,7 @@ class JobDescription(db.Model):
             "queued": bool(self.queued),
             "discarded": bool(self.discarded),
             "outcome": self.outcome or "",
+            "analyzedAt": self.analyzed_at.isoformat() if self.analyzed_at else None,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
         }

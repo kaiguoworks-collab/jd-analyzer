@@ -45,6 +45,7 @@
               <h2>Applied applications</h2>
               <p class="muted">Jobs confirmed as applied, with current application status.</p>
             </div>
+            <button class="btn btn-analyze" type="button" id="summary-btn">Analyzing summary</button>
           </div>
           <div class="dashboard-toolbar">
             <input
@@ -182,6 +183,33 @@
             <ul id="result-modal-weaknesses"></ul>
           </article>
         </div>
+      </div>
+    </dialog>
+    <dialog class="modal result-modal summary-modal" id="summary-modal">
+      <div class="result-modal-head">
+        <div>
+          <h2>Analyzing summary</h2>
+          <p class="muted" id="summary-subtitle">Missing keywords across applied jobs.</p>
+        </div>
+        <button class="btn btn-ghost" type="button" id="summary-modal-close">Close</button>
+      </div>
+      <div class="empty-state hidden" id="summary-empty">
+        <strong>No summary yet</strong>
+        <span>Apply to jobs first to see missing-keyword frequency.</span>
+      </div>
+      <div class="summary-body hidden" id="summary-body">
+        <section class="summary-group">
+          <h3>Most frequent</h3>
+          <div class="summary-keywords" id="summary-most"></div>
+        </section>
+        <section class="summary-group">
+          <h3>Medium</h3>
+          <div class="summary-keywords" id="summary-medium"></div>
+        </section>
+        <section class="summary-group">
+          <h3>Others</h3>
+          <div class="summary-keywords" id="summary-others"></div>
+        </section>
       </div>
     </dialog>
     <script src="dashboard.js"></script>
