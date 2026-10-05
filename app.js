@@ -1,9 +1,24 @@
 const els = {
   profileList: document.getElementById("profile-list"),
   addProfileBtn: document.getElementById("add-profile-btn"),
+  addUserBtn: document.getElementById("add-user-btn"),
+  openIntakeBtn: document.getElementById("open-intake-btn"),
   profileModal: document.getElementById("profile-modal"),
   profileForm: document.getElementById("profile-form"),
   profileName: document.getElementById("profile-name"),
+  profileUser: document.getElementById("profile-user"),
+  profileKeywordCloud: document.getElementById("profile-keyword-cloud"),
+  profileRoleCloud: document.getElementById("profile-role-cloud"),
+  refreshKeywordsBtn: document.getElementById("refresh-keywords-btn"),
+  profileResumeFile: document.getElementById("profile-resume-file"),
+  profileResumeText: document.getElementById("profile-resume-text"),
+  userModal: document.getElementById("user-modal"),
+  userForm: document.getElementById("user-form"),
+  userName: document.getElementById("user-name"),
+  userModalTitle: document.getElementById("user-modal-title"),
+  userModalConfirm: document.getElementById("user-modal-confirm"),
+  userModalCancel: document.getElementById("user-modal-cancel"),
+  profileModalCancel: document.getElementById("profile-modal-cancel"),
   resumeProfileLabel: document.getElementById("resume-profile-label"),
   resumeFile: document.getElementById("resume-file"),
   resumeText: document.getElementById("resume-text"),
@@ -38,6 +53,7 @@ const els = {
   strengthList: document.getElementById("strength-list"),
   weaknessList: document.getElementById("weakness-list"),
   missingKeywordCloud: document.getElementById("missing-keyword-cloud"),
+  knockoutList: document.getElementById("knockout-list"),
   workstyleBadge: document.getElementById("workstyle-badge"),
   workstyleNote: document.getElementById("workstyle-note"),
   companyFlagSlot: document.getElementById("company-flag-slot"),
@@ -75,13 +91,18 @@ const els = {
   applyConfirmYes: document.getElementById("apply-confirm-yes"),
 };
 
+const INBOX_KEY = "jd-inbox";
+
 const state = {
+  users: [],
+  editingUserId: null,
   profiles: [],
   activeProfileId: null,
   jobDescriptions: [],
   selectedResultId: null,
   resumeObjectUrl: null,
   saveTimer: null,
+  keywordTimer: null,
   pendingApplyJobIds: [],
   applyPrompt: { jobIds: [], leftPage: false, shown: false },
   checkedSelectedIds: new Set(),
@@ -89,18 +110,61 @@ const state = {
   checkedAppliedIds: new Set(),
   checkedDiscardedIds: new Set(),
   applyHistory: [],
+  analyzeControllers: new Map(),
 };
 
 function uid() {
-  return crypto.randomUUID();
+  return `jd-${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 12)}`;
 }
 
 function activeProfile() {
   return state.profiles.find((profile) => profile.id === state.activeProfileId) || null;
 }
 
-async function apiJson(url, options = {}) {
-  const response = await fetch(url, options);
+async function apiJson(url, options) {
+  const fetchOptions = options ? Object.assign({}, options) : {};
+  const waitMs =
+    Number(fetchOptions.timeoutMs) ||
+    (String(url).includes("/analyze")
+      ? 180000
+      : String(url).includes("/keywords")
+        ? 120000
+        : 45000);
+  const externalSignal = fetchOptions.signal;
+  delete fetchOptions.timeoutMs;
+  delete fetchOptions.signal;
+  const canAbort = typeof AbortController === "function";
+  const controller = canAbort ? new AbortController() : null;
+  if (controller) fetchOptions.signal = controller.signal;
+  const onExternalAbort = () => {
+    if (controller) controller.abort();
+  };
+  if (externalSignal) {
+    if (externalSignal.aborted) onExternalAbort();
+    else externalSignal.addEventListener("abort", onExternalAbort);
+  }
+  const timer = setTimeout(() => {
+    if (controller) controller.abort();
+  }, waitMs);
+  let response;
+  try {
+    response = await fetch(url, fetchOptions);
+  } catch (error) {
+    if (error && error.name === "AbortError") {
+      if (externalSignal && externalSignal.aborted) {
+        const stopped = new Error("Analyze was stopped.");
+        stopped.name = "AbortError";
+        throw stopped;
+      }
+      throw new Error("The server took too long to respond. Click Analyze again.");
+    }
+    throw new Error(
+      "Could not reach the JD Analyzer server. On this machine open http://HOST:PORT from the PC that is running python server.py. Do not open the HTML file directly."
+    );
+  } finally {
+    clearTimeout(timer);
+    if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(data.error || "Request failed.");
@@ -108,37 +172,221 @@ async function apiJson(url, options = {}) {
   return data;
 }
 
+function openDialog(dialog) {
+  if (!dialog) return;
+  try {
+    if (typeof dialog.showModal === "function") {
+      if (!dialog.open) dialog.showModal();
+      return;
+    }
+  } catch (_error) {
+    // Older browsers fall through to the open attribute.
+  }
+  dialog.setAttribute("open", "");
+}
+
+function closeDialog(dialog) {
+  if (!dialog) return;
+  try {
+    if (typeof dialog.close === "function") {
+      dialog.close();
+      return;
+    }
+  } catch (_error) {
+    // Older browsers fall through.
+  }
+  dialog.removeAttribute("open");
+}
+
+function parseKeywords(value) {
+  return String(value || "")
+    .split(/[\n,;|]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 40);
+}
+
+function flattenUsers(users) {
+  state.users = Array.isArray(users) ? users : [];
+  state.profiles = state.users.flatMap((user) =>
+    (user.profiles || []).map((profile) => ({
+      ...profile,
+      userId: user.id,
+      userName: user.name,
+    }))
+  );
+}
+
+function fillProfileUserSelect(preferredId) {
+  if (!els.profileUser) return;
+  const selected = preferredId || activeProfile()?.userId || state.users[0]?.id || "";
+  els.profileUser.innerHTML = state.users
+    .map(
+      (user) =>
+        `<option value="${escapeHtml(user.id)}"${user.id === selected ? " selected" : ""}>${escapeHtml(user.name)}</option>`
+    )
+    .join("");
+}
+
 function renderProfiles() {
   els.profileList.innerHTML = "";
-  if (!state.profiles.length) {
-    els.profileList.innerHTML = `<div class="empty-state" style="min-height:90px"><span>Create a profile, then upload its resume.</span></div>`;
+  if (!state.users.length && !state.profiles.length) {
+    els.profileList.innerHTML = `<div class="empty-state" style="min-height:90px"><span>Create a user, then add profiles under that user.</span></div>`;
     return;
   }
 
-  state.profiles.forEach((profile) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `profile-item${profile.id === state.activeProfileId ? " active" : ""}`;
-    button.innerHTML = `
-      <span>
-        <b>${escapeHtml(profile.name)}</b>
-        <small>${profile.resumeName || profile.resumeText ? "Resume attached" : "No resume yet"}</small>
-      </span>
-    `;
-    button.addEventListener("click", () => selectProfile(profile.id));
-
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "remove";
-    remove.setAttribute("aria-label", `Remove ${profile.name}`);
-    remove.textContent = "×";
-    remove.addEventListener("click", (event) => {
+  state.users.forEach((user) => {
+    const group = document.createElement("div");
+    group.className = "user-group";
+    group.dataset.userId = user.id;
+    bindUserDropTarget(group, user.id);
+    const head = document.createElement("div");
+    head.className = "user-group-head";
+    head.innerHTML = `<strong>${escapeHtml(user.name)}</strong>`;
+    const actions = document.createElement("div");
+    actions.className = "user-group-actions";
+    const editUser = document.createElement("button");
+    editUser.type = "button";
+    editUser.className = "user-edit";
+    editUser.setAttribute("aria-label", `Edit ${user.name}`);
+    editUser.textContent = "Edit";
+    editUser.addEventListener("click", (event) => {
       event.stopPropagation();
-      removeProfile(profile.id);
+      openUserModal(user);
     });
-    button.appendChild(remove);
-    els.profileList.appendChild(button);
+    const removeUser = document.createElement("button");
+    removeUser.type = "button";
+    removeUser.className = "remove";
+    removeUser.setAttribute("aria-label", `Remove ${user.name}`);
+    removeUser.textContent = "×";
+    removeUser.addEventListener("click", (event) => {
+      event.stopPropagation();
+      removeUserById(user.id);
+    });
+    actions.append(editUser, removeUser);
+    head.appendChild(actions);
+    group.appendChild(head);
+
+    const profiles = state.profiles.filter((profile) => profile.userId === user.id);
+    if (!profiles.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted user-group-empty";
+      empty.textContent = "No profiles yet.";
+      group.appendChild(empty);
+    }
+    profiles.forEach((profile) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `profile-item${profile.id === state.activeProfileId ? " active" : ""}`;
+      const roleCount = Array.isArray(profile.roles) ? profile.roles.length : 0;
+      const keywordCount = Array.isArray(profile.keywords) ? profile.keywords.length : 0;
+      const tagNote = [
+        roleCount ? `${roleCount} role${roleCount === 1 ? "" : "s"}` : "",
+        keywordCount ? `${keywordCount} keyword${keywordCount === 1 ? "" : "s"}` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      button.innerHTML = `
+        <span>
+          <b>${escapeHtml(profile.name)}</b>
+          <small>${profile.resumeName || profile.resumeText ? "Resume attached" : "No resume yet"}${
+            tagNote ? ` · ${tagNote}` : ""
+          }</small>
+        </span>
+      `;
+      button.draggable = true;
+      button.dataset.profileId = profile.id;
+      button.addEventListener("dragstart", (event) => {
+        event.dataTransfer.setData("text/plain", profile.id);
+        event.dataTransfer.effectAllowed = "move";
+        button.classList.add("is-dragging");
+      });
+      button.addEventListener("dragend", () => {
+        button.classList.remove("is-dragging");
+        document.querySelectorAll(".user-group.is-drop-target").forEach((node) => {
+          node.classList.remove("is-drop-target");
+        });
+      });
+      button.addEventListener("click", () => selectProfile(profile.id));
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "remove";
+      remove.setAttribute("aria-label", `Remove ${profile.name}`);
+      remove.textContent = "×";
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        removeProfile(profile.id);
+      });
+      button.appendChild(remove);
+      group.appendChild(button);
+    });
+    els.profileList.appendChild(group);
   });
+}
+
+function bindUserDropTarget(group, userId) {
+  group.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    group.classList.add("is-drop-target");
+  });
+  group.addEventListener("dragleave", (event) => {
+    if (!group.contains(event.relatedTarget)) group.classList.remove("is-drop-target");
+  });
+  group.addEventListener("drop", (event) => {
+    event.preventDefault();
+    group.classList.remove("is-drop-target");
+    const profileId = event.dataTransfer.getData("text/plain");
+    if (profileId) moveProfileToUser(profileId, userId);
+  });
+}
+
+async function moveProfileToUser(profileId, userId) {
+  const profile = state.profiles.find((item) => item.id === profileId);
+  const user = state.users.find((item) => item.id === userId);
+  if (!profile || !user || profile.userId === userId) return;
+  profile.userId = userId;
+  profile.userName = user.name;
+  renderProfiles();
+  renderResume();
+  try {
+    await apiJson(`/api/profiles/${profileId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId }),
+    });
+    await refreshUsers();
+    if (state.activeProfileId === profileId) renderResume();
+    els.analyzeHint.textContent = `Moved ${profile.name} to ${user.name}.`;
+  } catch (error) {
+    await refreshUsers().catch(() => {});
+    els.analyzeHint.textContent = error.message || "Could not move this profile.";
+  }
+}
+
+function renderTagCloud(node, items, emptyText, tagClass) {
+  if (!node) return;
+  const tags = Array.isArray(items) ? items.filter(Boolean) : [];
+  node.innerHTML = tags.length
+    ? tags
+        .map((item) => `<span class="tag${tagClass ? ` ${tagClass}` : ""}">${escapeHtml(item)}</span>`)
+        .join("")
+    : `<span class="muted">${escapeHtml(emptyText)}</span>`;
+}
+
+function renderProfileKeywords(profile) {
+  renderTagCloud(
+    els.profileRoleCloud,
+    profile?.roles,
+    "Upload or paste a resume to extract role tags.",
+    "is-role"
+  );
+  renderTagCloud(
+    els.profileKeywordCloud,
+    profile?.keywords,
+    "Upload or paste a resume to extract keywords.",
+    "is-skill"
+  );
 }
 
 function renderResume() {
@@ -148,11 +396,13 @@ function renderResume() {
     els.resumeEmpty.classList.remove("hidden");
     els.resumePreview.classList.add("hidden");
     els.resumeText.value = "";
+    renderProfileKeywords(null);
     return;
   }
 
-  els.resumeProfileLabel.textContent = `Resume for ${profile.name}`;
+  els.resumeProfileLabel.textContent = `Resume for ${profile.name}${profile.userName ? ` · ${profile.userName}` : ""}`;
   els.resumeText.value = profile.resumeText || "";
+  renderProfileKeywords(profile);
 
   const hasContent = Boolean(profile.resumeText || profile.resumeName);
   els.resumeEmpty.classList.toggle("hidden", hasContent);
@@ -576,19 +826,31 @@ async function queueJob(jd) {
   }
 }
 
-function isLocalAppHost() {
-  const host = window.location.hostname;
-  return host === "127.0.0.1" || host === "localhost" || host === "[::1]";
+function openApplyWindow(url) {
+  const opened = window.open(url, "_blank");
+  if (opened) {
+    try {
+      opened.opener = null;
+    } catch (_error) {
+      // Ignore cross-origin opener access errors.
+    }
+  }
+  return opened;
 }
 
-function openApplyUrlsHere(urls) {
-  let blocked = 0;
-  urls.forEach((url) => {
-    const opened = window.open(url, "_blank");
-    if (opened) opened.opener = null;
-    else blocked += 1;
+function openApplyItemsInThisBrowser(items) {
+  const ready = items.filter((item) => item?.url);
+  if (!ready.length) return;
+  let opened = 0;
+  ready.forEach((item) => {
+    if (openApplyWindow(item.url)) opened += 1;
   });
-  return blocked;
+  if (opened < ready.length && els.analyzeHint) {
+    els.analyzeHint.textContent =
+      opened === 0
+        ? "This browser blocked the apply tabs. Allow popups for this site, then click Apply again."
+        : `Opened ${opened} of ${ready.length} apply tabs. Allow popups for this site, then click Apply again to open the rest in this browser.`;
+  }
 }
 
 function applyJobs(jobs, { reapply = false, event } = {}) {
@@ -602,28 +864,13 @@ function applyJobs(jobs, { reapply = false, event } = {}) {
   event?.preventDefault();
   event?.stopPropagation();
 
-  const urls = ready.map((jd) => jd.url);
   const jobIds = ready.map((jd) => jd.id);
-  if (isLocalAppHost()) {
-    window.open(urls[0], "_blank");
-    if (urls.length > 1) {
-      fetch("/api/open-apply", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ urls: urls.slice(1) }),
-      }).catch((error) => {
-        els.analyzeHint.textContent = error.message || "Could not open every apply link.";
-      });
-    }
-  } else {
-    const blocked = openApplyUrlsHere(urls);
-    if (blocked) {
-      els.analyzeHint.textContent =
-        blocked === urls.length
-          ? "Browser blocked the apply tabs. Allow popups for this site, then click Apply again."
-          : `${blocked} extra apply tab${blocked === 1 ? " was" : "s were"} blocked. Allow popups for this site, then click Apply again.`;
-    }
-  }
+  openApplyItemsInThisBrowser(
+    ready.map((jd) => ({
+      url: jd.url,
+      title: jobHeading(jd),
+    }))
+  );
   ready.forEach((jd) => {
     jd.queued = false;
     state.checkedSelectedIds.delete(jd.id);
@@ -765,7 +1012,7 @@ function openApplyConfirmModal(jobIds) {
     els.applyConfirmNo.textContent = "None";
     els.applyConfirmYes.textContent = "Save";
   }
-  if (!els.applyConfirmModal.open) els.applyConfirmModal.showModal();
+  openDialog(els.applyConfirmModal);
 }
 
 async function settleApplyPrompt(allIds, confirmedIds) {
@@ -919,6 +1166,7 @@ function renderJobs() {
     const item = document.createElement("article");
     const selected = jd.id === state.selectedResultId;
     item.className = `jd-item status-${jd.status || "pending"}${selected ? " active" : ""}`;
+    item.dataset.jobId = jd.id;
     const checkbox = createItemCheckbox(state.checkedMainIds, jd.id, updateMainBulkBar);
 
     const main = document.createElement("button");
@@ -942,16 +1190,16 @@ function renderJobs() {
 
     const actions = document.createElement("div");
     actions.className = "jd-item-actions";
-    if (jd.status === "completed" || jd.status === "failed") {
+    if (jd.status === "completed" || jd.status === "failed" || jd.status === "analyzing") {
       const reanalyze = document.createElement("button");
       reanalyze.type = "button";
       reanalyze.className = "btn btn-ghost btn-reanalyze";
       reanalyze.textContent = "Reanalyze";
-      reanalyze.disabled = !canReanalyze(jd);
-      reanalyze.addEventListener("click", (event) => {
-        event.stopPropagation();
-        reanalyzeJob(jd);
-      });
+      reanalyze.title =
+        jd.status === "analyzing"
+          ? "Stop this analyze and start it again"
+          : "Run analyze again";
+      reanalyze.setAttribute("data-job-id", jd.id);
       actions.appendChild(reanalyze);
     }
     if (jd.status === "completed") {
@@ -1003,6 +1251,64 @@ function scoreTone(value) {
   return "low";
 }
 
+function asTermList(value) {
+  return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : [];
+}
+
+function splitMissingKeywords(result) {
+  const required = asTermList(result?.requiredMissing);
+  const preferred = asTermList(result?.preferredMissing);
+  const legacy = asTermList(result?.missingKeywords);
+  if (required.length || preferred.length) {
+    return { required, preferred, split: true };
+  }
+  return { required: legacy, preferred: [], split: false };
+}
+
+function failedKnockouts(result) {
+  return (Array.isArray(result?.knockouts) ? result.knockouts : []).filter(
+    (item) => item && String(item.status || "").toLowerCase() === "fail"
+  );
+}
+
+function renderKeywordGroups(container, result) {
+  if (!container) return;
+  const groups = splitMissingKeywords(result);
+  if (!groups.required.length && !groups.preferred.length) {
+    container.innerHTML = `<span class="muted">No missing keywords were identified.</span>`;
+    return;
+  }
+  const requiredLabel = groups.split ? "Required missing" : "Missing keywords";
+  const required = groups.required.length
+    ? groups.required.map((keyword) => `<span class="tag is-required">${escapeHtml(keyword)}</span>`).join("")
+    : `<span class="muted">None</span>`;
+  const preferred = groups.split
+    ? `<div class="missing-group"><h4>Preferred missing</h4><div class="keyword-cloud">${
+        groups.preferred.length
+          ? groups.preferred.map((keyword) => `<span class="tag is-preferred">${escapeHtml(keyword)}</span>`).join("")
+          : `<span class="muted">None</span>`
+      }</div></div>`
+    : "";
+  container.innerHTML = `<div class="missing-group"><h4>${requiredLabel}</h4><div class="keyword-cloud">${required}</div></div>${preferred}`;
+}
+
+function renderKnockouts(container, result) {
+  if (!container) return;
+  const knockouts = Array.isArray(result?.knockouts) ? result.knockouts : [];
+  if (!knockouts.length) {
+    container.innerHTML = `<span class="muted">No hard requirements were flagged.</span>`;
+    return;
+  }
+  container.innerHTML = `<ul class="knockout-list">${knockouts
+    .map((item) => {
+      const status = String(item.status || "unknown").toLowerCase();
+      const label = status === "fail" ? "Fail" : status === "pass" ? "Pass" : "Unknown";
+      const note = item.note ? `<p class="muted">${escapeHtml(item.note)}</p>` : "";
+      return `<li class="knockout-item is-${escapeHtml(status)}"><span class="knockout-flag">${label}</span><div><strong>${escapeHtml(item.requirement || "Requirement")}</strong>${note}</div></li>`;
+    })
+    .join("")}</ul>`;
+}
+
 function jdStatusHtml(jd) {
   if (jd.status === "analyzing") {
     return `<div class="jd-item-meta"><span class="jd-status analyzing"><span class="spinner" aria-hidden="true"></span> Analyzing…</span>${analyzedDateHtml(jd)}</div>`;
@@ -1014,6 +1320,7 @@ function jdStatusHtml(jd) {
     const location = Number.isFinite(jd.result.location) ? jd.result.location : 0;
     const overall = Number.isFinite(jd.result.overall) ? jd.result.overall : 0;
     const workStyle = jd.result.workStyle || "Unspecified";
+    const knockoutCount = failedKnockouts(jd.result).length;
     return `
       <div class="jd-item-meta">
         <span class="jd-status completed">Completed</span>
@@ -1021,6 +1328,11 @@ function jdStatusHtml(jd) {
         <span class="jd-metrics">
           <span class="score-chip ${scoreTone(overall)}">Overall match ${overall}%</span>
           <span class="score-chip ${scoreTone(location)}"><span>${escapeHtml(workStyle)}</span><span>${location}%</span></span>
+          ${
+            knockoutCount
+              ? `<span class="score-chip knockout">${knockoutCount} knockout${knockoutCount === 1 ? "" : "s"}</span>`
+              : ""
+          }
         </span>
       </div>
     `;
@@ -1049,23 +1361,40 @@ function analyzedDateHtml(jd) {
   return `<span class="jd-analyzed-date">Analyzed ${escapeHtml(label)}</span>`;
 }
 
-function canReanalyze(jd) {
-  const profile = activeProfile();
-  return Boolean(jd?.text && profile && String(profile.resumeText || "").trim());
+function abortAnalyze(jobId) {
+  const controller = state.analyzeControllers.get(jobId);
+  if (!controller) return;
+  try {
+    controller.abort();
+  } catch (_error) {
+    // Ignore browsers that cannot abort.
+  }
+  state.analyzeControllers.delete(jobId);
 }
 
 async function reanalyzeJob(jd) {
   const profile = activeProfile();
-  if (!canReanalyze(jd)) {
-    els.analyzeHint.textContent = jd?.text
-      ? "Add resume text to the selected profile first."
-      : "This JD has no text to reanalyze.";
+  if (!profile || !(profile.resumeText || "").trim()) {
+    els.analyzeHint.textContent = "Add resume text to the selected profile first.";
     return;
   }
-  if (jd.status === "analyzing") return;
+  if (!jd?.text) {
+    els.analyzeHint.textContent = "This JD has no saved text to reanalyze.";
+    return;
+  }
+  if (jd.status === "analyzing") {
+    abortAnalyze(jd.id);
+    els.analyzeHint.textContent = `Stopped current analyze. Restarting ${jdLabel(jd)}…`;
+  } else {
+    els.analyzeHint.textContent = `Reanalyzing ${jdLabel(jd)}…`;
+  }
   state.selectedResultId = jd.id;
-  els.analyzeHint.textContent = `Reanalyzing ${jdLabel(jd)}…`;
-  await analyzeJob(jd, profile);
+  try {
+    await analyzeJob(jd, profile);
+  } catch (error) {
+    if (error && error.name === "AbortError") return;
+    els.analyzeHint.textContent = error.message || "Reanalyze failed.";
+  }
 }
 
 function setResultJdLink(jd) {
@@ -1097,7 +1426,7 @@ function renderResults() {
     } else {
       els.resultsEmpty.innerHTML = `<strong>No analysis yet</strong><span>Paste a job description and click Analyze. Open a completed item for the full breakdown.</span>`;
     }
-    els.resultsSubtitle.textContent = "Overall score plus keyword, experience, location, and work style.";
+    els.resultsSubtitle.textContent = "Overall is keyword and experience only. Location is scored separately.";
     if (els.companyFlagSlot) els.companyFlagSlot.innerHTML = "";
     attachCompanyFlag(els.companyFlagSlot, selectedJd);
     renderResultActions(selectedJd);
@@ -1109,8 +1438,12 @@ function renderResults() {
 
   els.overallValue.textContent = `${selected.overall}%`;
   els.overallRing.style.background = `conic-gradient(var(--teal) ${selected.overall * 3.6}deg, var(--surface-2) 0deg)`;
-  els.overallCaption.textContent =
+  const knockoutFails = failedKnockouts(selected);
+  const fitLabel =
     selected.overall >= 75 ? "Strong overall fit" : selected.overall >= 50 ? "Partial fit" : "Weak overall fit";
+  els.overallCaption.textContent = knockoutFails.length
+    ? `${fitLabel} · ${knockoutFails.length} knockout${knockoutFails.length === 1 ? "" : "s"}`
+    : fitLabel;
 
   setMetric(els.keywordScore, els.keywordBar, selected.keyword);
   setMetric(els.experienceScore, els.experienceBar, selected.experience);
@@ -1118,10 +1451,8 @@ function renderResults() {
 
   els.strengthList.innerHTML = selected.strengths.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
   els.weaknessList.innerHTML = selected.weaknesses.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
-  const missing = Array.isArray(selected.missingKeywords) ? selected.missingKeywords : [];
-  els.missingKeywordCloud.innerHTML = missing.length
-    ? missing.map((keyword) => `<span class="tag">${escapeHtml(keyword)}</span>`).join("")
-    : `<span class="muted">No missing keywords were identified.</span>`;
+  renderKeywordGroups(els.missingKeywordCloud, selected);
+  renderKnockouts(els.knockoutList, selected);
   const workStyle = selected.workStyle || "Unspecified";
   els.workstyleBadge.textContent = workStyle;
   els.workstyleBadge.dataset.style = workStyle;
@@ -1167,17 +1498,33 @@ function setMetric(label, bar, value) {
 }
 
 function mergeProfile(updated) {
+  if (!updated?.id) return;
   const index = state.profiles.findIndex((item) => item.id === updated.id);
+  const current = index >= 0 ? state.profiles[index] : null;
   const next = {
     keywords: [],
+    roles: [],
     resumeText: "",
     resumeName: "",
     resumeType: "",
     hasFile: false,
+    userId: current?.userId || "",
+    userName: current?.userName || "",
+    ...(current || {}),
     ...updated,
   };
-  if (index >= 0) state.profiles[index] = { ...state.profiles[index], ...next };
+  if (!next.userName && next.userId) {
+    next.userName = state.users.find((user) => user.id === next.userId)?.name || next.userName;
+  }
+  if (index >= 0) state.profiles[index] = next;
   else state.profiles.push(next);
+  const user = state.users.find((item) => item.id === next.userId);
+  if (user) {
+    user.profiles = Array.isArray(user.profiles) ? user.profiles : [];
+    const userIndex = user.profiles.findIndex((item) => item.id === next.id);
+    if (userIndex >= 0) user.profiles[userIndex] = { ...user.profiles[userIndex], ...next };
+    else user.profiles.push(next);
+  }
 }
 
 async function persistProfile(profile, { log = false, clearResume = false } = {}) {
@@ -1189,7 +1536,6 @@ async function persistProfile(profile, { log = false, clearResume = false } = {}
       resumeText: profile.resumeText,
       resumeName: profile.resumeName,
       resumeType: profile.resumeType,
-      keywords: profile.keywords,
       clearResume,
       log,
     }),
@@ -1204,6 +1550,16 @@ function scheduleSave(profile) {
       els.analyzeHint.textContent = error.message;
     });
   }, 450);
+}
+
+function scheduleKeywordExtract(profile) {
+  clearTimeout(state.keywordTimer);
+  state.keywordTimer = setTimeout(() => {
+    if (!(profile.resumeText || "").trim()) return;
+    refreshKeywordsFromResume(profile).catch((error) => {
+      els.analyzeHint.textContent = error.message;
+    });
+  }, 1400);
 }
 
 async function loadResumePreview(profile) {
@@ -1243,7 +1599,7 @@ async function selectProfile(id) {
 async function removeProfile(id) {
   try {
     await apiJson(`/api/profiles/${id}`, { method: "DELETE" });
-    state.profiles = state.profiles.filter((profile) => profile.id !== id);
+    await refreshUsers();
     if (state.activeProfileId === id) {
       state.activeProfileId = state.profiles[0]?.id || null;
     }
@@ -1253,19 +1609,121 @@ async function removeProfile(id) {
   }
 }
 
-async function createProfile(name) {
-  const data = await apiJson("/api/profiles", {
+function openUserModal(user) {
+  state.editingUserId = user?.id || null;
+  if (els.userModalTitle) els.userModalTitle.textContent = user ? "Edit user" : "New user";
+  if (els.userModalConfirm) els.userModalConfirm.textContent = user ? "Save" : "Create";
+  if (els.userName) els.userName.value = user?.name || "";
+  openDialog(els.userModal);
+  els.userName?.focus();
+  els.userName?.select();
+}
+
+async function createUser(name) {
+  const data = await apiJson("/api/users", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
   });
-  mergeProfile(data.profile);
-  await selectProfile(data.profile.id);
+  await refreshUsers();
+  return data.user;
+}
+
+async function renameUser(id, name) {
+  await apiJson(`/api/users/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  await refreshUsers();
+  renderResume();
+}
+
+async function removeUserById(id) {
+  try {
+    await apiJson(`/api/users/${id}`, { method: "DELETE" });
+    const wasActive = activeProfile()?.userId === id;
+    await refreshUsers();
+    if (wasActive || !state.profiles.some((profile) => profile.id === state.activeProfileId)) {
+      state.activeProfileId = state.profiles[0]?.id || null;
+      await selectProfile(state.activeProfileId);
+    } else {
+      renderProfiles();
+    }
+  } catch (error) {
+    els.analyzeHint.textContent = error.message;
+  }
+}
+
+async function createProfile({ name, userId, resumeText, resumeName, resumeFile }) {
+  const data = await apiJson("/api/profiles", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name,
+      userId,
+      resumeText: resumeFile ? "" : resumeText || "",
+      resumeName: resumeFile ? "" : resumeName || "",
+    }),
+  });
+  const created = data.profile;
+  if (!created?.id) throw new Error("Could not create this profile.");
+  await refreshUsers();
+  if (!state.profiles.some((item) => item.id === created.id)) mergeProfile(created);
+  await selectProfile(created.id);
+  const profile = activeProfile();
+  if (resumeFile && profile) {
+    await uploadResumeFile(profile, resumeFile);
+  } else if (profile && (profile.resumeText || "").trim()) {
+    await refreshKeywordsFromResume(profile);
+  }
+  return activeProfile();
+}
+
+async function uploadResumeFile(profile, file) {
+  if (state.resumeObjectUrl) URL.revokeObjectURL(state.resumeObjectUrl);
+  state.resumeObjectUrl = URL.createObjectURL(file);
+  profile.resumeName = file.name;
+  profile.resumeType = file.type || "";
+  profile.hasFile = true;
+  renderProfiles();
+  renderResume();
+
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`/api/profiles/${profile.id}/resume`, {
+    method: "POST",
+    body: form,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (data.profile) mergeProfile(data.profile);
+  renderProfiles();
+  renderResume();
+  if (!response.ok) throw new Error(data.error || "Could not save resume.");
+  const saved = activeProfile() || profile;
+  if ((saved.resumeText || "").trim()) {
+    await refreshKeywordsFromResume(saved);
+  }
+  return data.profile;
+}
+
+async function refreshKeywordsFromResume(profile) {
+  if (!profile) return;
+  const data = await apiJson(`/api/profiles/${profile.id}/keywords`, { method: "POST" });
+  if (data.profile) mergeProfile(data.profile);
+  renderProfiles();
+  renderResume();
+}
+
+async function refreshUsers() {
+  const data = await apiJson("/api/users");
+  flattenUsers(data.users);
+  fillProfileUserSelect();
+  renderProfiles();
 }
 
 async function loadProfiles() {
-  const data = await apiJson("/api/profiles");
-  state.profiles = Array.isArray(data.profiles) ? data.profiles : [];
+  await refreshUsers();
   state.activeProfileId = state.profiles[0]?.id || null;
   if (state.activeProfileId) {
     await selectProfile(state.activeProfileId);
@@ -1276,53 +1734,192 @@ async function loadProfiles() {
   }
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+function openIntakeWindow() {
+  window.open("/intake", "jd-intake", "popup=yes,width=1100,height=900");
 }
 
-els.addProfileBtn.addEventListener("click", () => {
-  els.profileName.value = "";
-  els.profileModal.showModal();
-  els.profileName.focus();
+async function handleInbox(payload) {
+  let data = payload;
+  if (!data) {
+    try {
+      data = JSON.parse(localStorage.getItem(INBOX_KEY) || "null");
+    } catch (_error) {
+      data = null;
+    }
+  }
+  if (!data || !Array.isArray(data.profileIds) || !data.profileIds.length) return;
+  if (!data.profileIds.includes(state.activeProfileId)) return;
+  try {
+    await loadJobs(state.activeProfileId);
+    els.analyzeHint.textContent = "A matched JD was added to this profile. Full analyze is running.";
+  } catch (error) {
+    els.analyzeHint.textContent = error.message;
+  }
+}
+
+function startInboxWatch() {
+  window.addEventListener("storage", (event) => {
+    if (event.key === INBOX_KEY) handleInbox();
+  });
+  try {
+    const channel = new BroadcastChannel(INBOX_KEY);
+    channel.addEventListener("message", (event) => handleInbox(event.data));
+  } catch (_error) {
+    // Older browsers fall back to polling.
+  }
+  setInterval(() => {
+    if (document.hidden || !state.activeProfileId) return;
+    refreshJobsQuiet().catch(() => {});
+  }, 5000);
+}
+
+async function refreshJobsQuiet() {
+  const profileId = state.activeProfileId;
+  if (!profileId) return;
+  const data = await apiJson(`/api/profiles/${profileId}/jobs?limit=100`);
+  if (state.activeProfileId !== profileId) return;
+  const incoming = (Array.isArray(data.jobs) ? data.jobs : []).slice(0, 100);
+  const previous = new Map(state.jobDescriptions.map((jd) => [jd.id, jd.status]));
+  const changed =
+    incoming.length !== state.jobDescriptions.length ||
+    incoming.some((jd) => previous.get(jd.id) !== jd.status);
+  if (!changed) return;
+  state.jobDescriptions = incoming;
+  renderJobs();
+  renderAppliedList();
+  renderResults();
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+els.userModalCancel?.addEventListener("click", () => {
+  state.editingUserId = null;
+  closeDialog(els.userModal);
 });
 
-els.profileForm.addEventListener("submit", async (event) => {
-  const submitter = event.submitter;
-  if (submitter?.value !== "confirm") return;
-  const name = els.profileName.value.trim();
-  if (!name) return;
+els.profileModalCancel?.addEventListener("click", () => {
+  closeDialog(els.profileModal);
+});
+
+els.addUserBtn?.addEventListener("click", () => {
+  openUserModal(null);
+});
+
+els.userForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const name = els.userName?.value.trim();
+  if (!name) {
+    els.analyzeHint.textContent = "Enter a user name.";
+    return;
+  }
+  const editingId = state.editingUserId;
+  state.editingUserId = null;
+  closeDialog(els.userModal);
   try {
-    await createProfile(name);
+    if (editingId) {
+      await renameUser(editingId, name);
+      els.analyzeHint.textContent = `Renamed user to ${name}.`;
+    } else {
+      await createUser(name);
+      els.analyzeHint.textContent = `Created user ${name}. Add a profile under that user.`;
+    }
   } catch (error) {
     els.analyzeHint.textContent = error.message;
   }
 });
 
-els.resumeFile.addEventListener("change", async (event) => {
+els.addProfileBtn?.addEventListener("click", () => {
+  if (!state.users.length) {
+    els.analyzeHint.textContent = "Create a user first, then add a profile.";
+    return;
+  }
+  els.profileName.value = "";
+  if (els.profileResumeText) els.profileResumeText.value = "";
+  if (els.profileResumeFile) els.profileResumeFile.value = "";
+  fillProfileUserSelect();
+  openDialog(els.profileModal);
+  els.profileName.focus();
+});
+
+els.openIntakeBtn?.addEventListener("click", openIntakeWindow);
+
+els.profileForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const submitter = event.submitter || document.activeElement;
+  if (submitter?.dataset?.cancel === "true") return;
+  const name = els.profileName.value.trim();
+  const userId = els.profileUser?.value || state.users[0]?.id;
+  const resumeText = els.profileResumeText?.value || "";
+  const resumeFile = els.profileResumeFile?.files?.[0] || null;
+  const resumeName = resumeFile?.name || (resumeText.trim() ? "Pasted resume" : "");
+  if (!name) {
+    els.analyzeHint.textContent = "Enter a profile name.";
+    return;
+  }
+  closeDialog(els.profileModal);
+  try {
+    els.analyzeHint.textContent = resumeFile || resumeText.trim()
+      ? "Creating profile and reading the resume…"
+      : "Creating profile…";
+    await createProfile({
+      name,
+      userId,
+      resumeText,
+      resumeName,
+      resumeFile,
+    });
+    const created = activeProfile();
+    const roleCount = created?.roles?.length || 0;
+    const keywordCount = created?.keywords?.length || 0;
+    els.analyzeHint.textContent =
+      roleCount || keywordCount
+        ? `Created ${name}. ${roleCount} role tag${roleCount === 1 ? "" : "s"} and ${keywordCount} keyword${keywordCount === 1 ? "" : "s"} extracted.`
+        : created?.resumeText
+          ? `Created ${name}. Resume is attached; tags could not be extracted yet.`
+          : `Created ${name}. Add a resume to extract role tags and keywords for Match.`;
+  } catch (error) {
+    els.analyzeHint.textContent = error.message;
+    renderProfiles();
+    renderResume();
+  }
+});
+
+els.refreshKeywordsBtn?.addEventListener("click", async () => {
+  const profile = activeProfile();
+  if (!profile) return;
+  els.analyzeHint.textContent = "Extracting role tags and keywords from this resume…";
+  try {
+    await refreshKeywordsFromResume(profile);
+    const current = activeProfile();
+    els.analyzeHint.textContent = `${(current?.roles || []).length} role tags and ${(current?.keywords || []).length} keywords updated.`;
+  } catch (error) {
+    els.analyzeHint.textContent = error.message || "Could not extract role tags and keywords.";
+  }
+});
+
+els.resumeFile?.addEventListener("change", async (event) => {
   const profile = activeProfile();
   const file = event.target.files?.[0];
   event.target.value = "";
   if (!profile || !file) return;
-  els.analyzeHint.textContent = "Saving resume…";
+    els.analyzeHint.textContent = "Saving resume…";
   try {
-    const form = new FormData();
-    form.append("file", file);
-    const response = await fetch(`/api/profiles/${profile.id}/resume`, {
-      method: "POST",
-      body: form,
-    });
-    const data = await response.json().catch(() => ({}));
-    if (data.profile) mergeProfile(data.profile);
-    if (state.resumeObjectUrl) URL.revokeObjectURL(state.resumeObjectUrl);
-    state.resumeObjectUrl = URL.createObjectURL(file);
-    renderProfiles();
-    renderResume();
-    if (!response.ok) throw new Error(data.error || "Could not save resume.");
-    els.analyzeHint.textContent = "Resume saved. Paste a JD and click Analyze.";
+    await uploadResumeFile(profile, file);
+    const current = activeProfile();
+    const roleCount = current?.roles?.length || 0;
+    const keywordCount = current?.keywords?.length || 0;
+    els.analyzeHint.textContent =
+      roleCount || keywordCount
+        ? `Resume saved. ${roleCount} role tags and ${keywordCount} keywords extracted for Match.`
+        : (current?.resumeText || "").trim()
+          ? "Resume saved. Tags could not be extracted yet."
+          : "Resume saved. Paste a JD and click Analyze.";
   } catch (error) {
     els.analyzeHint.textContent = error.message || "Could not extract resume text.";
     renderProfiles();
@@ -1330,7 +1927,7 @@ els.resumeFile.addEventListener("change", async (event) => {
   }
 });
 
-els.resumeText.addEventListener("input", (event) => {
+els.resumeText?.addEventListener("input", (event) => {
   const profile = activeProfile();
   if (!profile) return;
   profile.resumeText = event.target.value;
@@ -1346,9 +1943,10 @@ els.resumeText.addEventListener("input", (event) => {
   }
   renderProfiles();
   scheduleSave(profile);
+  scheduleKeywordExtract(profile);
 });
 
-els.clearResumeBtn.addEventListener("click", async () => {
+els.clearResumeBtn?.addEventListener("click", async () => {
   const profile = activeProfile();
   if (!profile) return;
   try {
@@ -1358,6 +1956,7 @@ els.clearResumeBtn.addEventListener("click", async () => {
     profile.resumeType = "";
     profile.hasFile = false;
     profile.keywords = [];
+    profile.roles = [];
     if (state.resumeObjectUrl) URL.revokeObjectURL(state.resumeObjectUrl);
     state.resumeObjectUrl = null;
     renderProfiles();
@@ -1367,9 +1966,25 @@ els.clearResumeBtn.addEventListener("click", async () => {
   }
 });
 
-els.addJdBtn.addEventListener("click", async () => {
-  const text = els.jdText.value.trim();
-  const url = normalizeJdUrl(els.jdUrl.value);
+function analyzingJobs() {
+  return state.jobDescriptions.filter((jd) => jd.status === "analyzing");
+}
+
+function setAnalyzeProgressHint(latestJd) {
+  if (!els.analyzeHint) return;
+  const running = analyzingJobs();
+  if (!running.length) return;
+  if (running.length === 1) {
+    els.analyzeHint.textContent = `Analyzing ${jdLabel(running[0])}… Paste another JD and click Analyze to run more at the same time.`;
+    return;
+  }
+  const latest = latestJd ? ` Latest: ${jdLabel(latestJd)}.` : "";
+  els.analyzeHint.textContent = `Analyzing ${running.length} jobs at the same time.${latest}`;
+}
+
+async function startAnalyzeFromComposer() {
+  const text = els.jdText ? els.jdText.value.trim() : "";
+  const url = normalizeJdUrl(els.jdUrl ? els.jdUrl.value : "");
   if (!url) {
     els.analyzeHint.textContent = "Paste a valid JD link first.";
     return;
@@ -1407,21 +2022,47 @@ els.addJdBtn.addEventListener("click", async () => {
   state.jobDescriptions.unshift(jd);
   state.jobDescriptions = state.jobDescriptions.slice(0, 100);
   state.selectedResultId = jd.id;
-  els.jdUrl.value = "";
-  els.jdText.value = "";
-  els.analyzeHint.textContent = `Analyzing ${jdLabel(jd)}…`;
+  if (els.jdUrl) els.jdUrl.value = "";
+  if (els.jdText) els.jdText.value = "";
+  setAnalyzeProgressHint(jd);
   renderJobs();
   renderAppliedList();
   renderResults();
+  if (els.jdUrl) els.jdUrl.focus();
+
   try {
-    await persistJob(profile.id, jd);
+    try {
+      await persistJob(profile.id, jd);
+    } catch (error) {
+      els.analyzeHint.textContent = error.message;
+    }
+    await analyzeJob(jd, profile);
   } catch (error) {
-    els.analyzeHint.textContent = error.message;
+    els.analyzeHint.textContent = error.message || "Analyze failed.";
   }
-  await analyzeJob(jd, profile);
+}
+
+document.addEventListener("click", (event) => {
+  const analyzeBtn = event.target.closest("#add-jd-btn");
+  if (analyzeBtn) {
+    event.preventDefault();
+    startAnalyzeFromComposer();
+    return;
+  }
+  const reanalyzeBtn = event.target.closest(".btn-reanalyze");
+  if (!reanalyzeBtn) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const jobId = reanalyzeBtn.getAttribute("data-job-id") || reanalyzeBtn.closest("[data-job-id]")?.dataset.jobId;
+  const jd = state.jobDescriptions.find((item) => item.id === jobId);
+  if (!jd) {
+    els.analyzeHint.textContent = "Could not find this JD to reanalyze.";
+    return;
+  }
+  reanalyzeJob(jd);
 });
 
-els.resultApplyBtn.addEventListener("click", (event) => {
+els.resultApplyBtn?.addEventListener("click", (event) => {
   const jd = state.jobDescriptions.find((item) => item.id === state.selectedResultId);
   applyToJob(jd, event);
 });
@@ -1488,7 +2129,7 @@ els.discardedBulkBackup?.addEventListener("click", () => {
 });
 
 els.applyConfirmForm?.addEventListener("submit", (event) => {
-  const submitter = event.submitter;
+  const submitter = event.submitter || document.activeElement;
   const allIds = [...(state.pendingApplyJobIds || [])];
   state.pendingApplyJobIds = [];
   let confirmedIds = [];
@@ -1523,27 +2164,35 @@ window.addEventListener("focus", () => {
   maybeShowApplyPrompt();
 });
 
-els.resultDiscardBtn.addEventListener("click", () => {
+els.resultDiscardBtn?.addEventListener("click", () => {
   if (state.selectedResultId) discardJob(state.selectedResultId);
 });
 
 async function analyzeJob(jd, profile) {
+  abortAnalyze(jd.id);
+  const runId = uid();
+  jd.analyzeRunId = runId;
   jd.status = "analyzing";
   jd.error = "";
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  if (controller) state.analyzeControllers.set(jd.id, controller);
   renderJobs();
   renderResults();
   try {
     const data = await apiJson("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: controller ? controller.signal : undefined,
       body: JSON.stringify({
         profileId: profile.id,
         profileName: profile.name,
         resumeText: profile.resumeText,
         keywords: profile.keywords,
+        roles: profile.roles,
         jobDescriptions: [{ id: jd.id, title: jd.title, text: jd.text, url: jd.url }],
       }),
     });
+    if (jd.analyzeRunId !== runId) return;
     const result = Array.isArray(data.results) ? data.results[0] : null;
     if (!result) throw new Error("OpenAI returned no result for this JD.");
     jd.status = "completed";
@@ -1553,30 +2202,54 @@ async function analyzeJob(jd, profile) {
     if (result.title) jd.title = result.title;
     jd.error = "";
     if (Array.isArray(data.jobs) && data.jobs[0]) applySavedJob(jd, data.jobs[0]);
-    els.analyzeHint.textContent = `${jdLabel(jd)} completed. Click it for the full breakdown.`;
+    const remaining = analyzingJobs().filter((item) => item.id !== jd.id);
+    els.analyzeHint.textContent = remaining.length
+      ? `${jdLabel(jd)} completed. ${remaining.length} still analyzing.`
+      : `${jdLabel(jd)} completed. Click it for the full breakdown.`;
   } catch (error) {
+    if (jd.analyzeRunId !== runId) return;
+    if (error && error.name === "AbortError") return;
     jd.status = "failed";
     jd.result = null;
     jd.error = error.message || "Could not reach the analyze API.";
-    els.analyzeHint.textContent = `${jdLabel(jd)} failed.`;
+    const remaining = analyzingJobs().filter((item) => item.id !== jd.id);
+    els.analyzeHint.textContent = remaining.length
+      ? `${jdLabel(jd)} failed. ${remaining.length} still analyzing.`
+      : `${jdLabel(jd)} failed.`;
     try {
       await persistJob(profile.id, jd);
     } catch (_persistError) {
       // Analyze already writes failed rows when the server is reachable.
     }
+  } finally {
+    if (state.analyzeControllers.get(jd.id) === controller) {
+      state.analyzeControllers.delete(jd.id);
+    }
+    if (jd.analyzeRunId === runId) {
+      renderJobs();
+      renderAppliedList();
+      renderResults();
+    }
   }
-  renderJobs();
-  renderAppliedList();
-  renderResults();
 }
 
 async function bootstrap() {
+  try {
+    const health = await apiJson("/api/health");
+    if (!health.hasApiKey) {
+      els.analyzeHint.textContent =
+        "Server is missing OPENAI_API_KEY in .env. Analyze will fail until that is set and the server is restarted.";
+    }
+  } catch (error) {
+    els.analyzeHint.textContent = error.message || "Could not reach the JD Analyzer server.";
+  }
   try {
     await loadProfiles();
   } catch (error) {
     els.analyzeHint.textContent = error.message || "Could not load saved profiles.";
     renderProfiles();
   }
+  startInboxWatch();
   renderJobs();
   renderAppliedList();
   renderResults();

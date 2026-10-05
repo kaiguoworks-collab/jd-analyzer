@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Open apply tabs</title>
+    <link rel="stylesheet" href="styles.css?v=6" />
+    <style>
+      .apply-launch {
+        max-width: 560px;
+        margin: 48px auto;
+        padding: 0 20px;
+      }
+      .apply-launch h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+      }
+      .apply-launch-list {
+        display: grid;
+        gap: 8px;
+        margin: 16px 0 20px;
+      }
+      .apply-launch-list a {
+        display: block;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--surface-2);
+        color: inherit;
+        text-decoration: none;
+        font-weight: 600;
+      }
+      .apply-launch-list a:hover {
+        background: var(--btn-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="apply-launch">
+      <h1>Opening apply tabs</h1>
+      <p class="muted" id="apply-launch-copy">Opening the selected jobs in this browser.</p>
+      <div class="apply-launch-list" id="apply-launch-list"></div>
+      <button class="btn btn-analyze" type="button" id="apply-launch-open-all">Open all tabs</button>
+    </main>
+    <script>
+      const STORAGE_KEY = "jd-apply-launch";
+
+      function loadItems() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY) || sessionStorage.getItem(STORAGE_KEY);
+          const data = raw ? JSON.parse(raw) : null;
+          if (!data || !Array.isArray(data.items) || Date.now() - Number(data.at || 0) > 120000) {
+            return [];
+          }
+          return data.items.filter((item) => item && item.url);
+        } catch (_error) {
+          return [];
+        }
+      }
+
+      function openItem(item) {
+        const opened = window.open(item.url, "_blank");
+        if (opened) {
+          try {
+            opened.opener = null;
+          } catch (_error) {
+            // Ignore.
+          }
+        }
+        return Boolean(opened);
+      }
+
+      function openAll(items) {
+        return items.filter((item) => !openItem(item));
+      }
+
+      const items = loadItems();
+      const copy = document.getElementById("apply-launch-copy");
+      const list = document.getElementById("apply-launch-list");
+      const openAllBtn = document.getElementById("apply-launch-open-all");
+
+      if (!items.length) {
+        copy.textContent = "No apply links were passed. Close this tab and click Apply again.";
+        openAllBtn.hidden = true;
+      } else {
+        let leftover = openAll(items);
+        if (!leftover.length) {
+          window.close();
+        } else {
+          copy.textContent =
+            leftover.length === items.length
+              ? "This browser blocked extra tabs. Click Open all tabs, or click each job below."
+              : "Some tabs opened. Click the remaining jobs below, or Open all tabs.";
+          leftover.forEach((item) => {
+            const link = document.createElement("a");
+            link.href = item.url;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.textContent = item.title || item.url;
+            list.appendChild(link);
+          });
+          openAllBtn.addEventListener("click", () => {
+            leftover = openAll(leftover);
+            if (!leftover.length) {
+              window.close();
+              return;
+            }
+            list.innerHTML = "";
+            leftover.forEach((item) => {
+              const link = document.createElement("a");
+              link.href = item.url;
+              link.target = "_blank";
+              link.rel = "noopener noreferrer";
+              link.textContent = item.title || item.url;
+              list.appendChild(link);
+            });
+            copy.textContent =
+              "Allow popups for this site, then click Open all tabs again. Or click each job name.";
+          });
+        }
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Inbox · JD Analyzer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css?v=11" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <p class="brand-kicker">Resume intelligence</p>
+            <h1>Inbox</h1>
+          </div>
+        </div>
+        <div class="topbar-end">
+          <nav class="top-nav" aria-label="Primary">
+            <a class="nav-link" href="/">Analyzer</a>
+            <a class="nav-link is-active" href="/match">Inbox</a>
+            <a class="nav-link" href="/dashboard">Dashboard</a>
+          </nav>
+          <p class="topbar-note">Paste a JD to rank this user’s profiles, then send the job to the ones you want analyzed.</p>
+        </div>
+      </header>
+
+      <main class="match-workspace">
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h2>Job description</h2>
+              <p class="muted">Pick a user, then paste the link and JD. Matching starts automatically.</p>
+            </div>
+          </div>
+          <label class="field-label" for="match-user">User</label>
+          <select id="match-user" class="text-input"></select>
+          <label class="field-label" for="match-url">JD link</label>
+          <input
+            id="match-url"
+            class="text-input"
+            type="text"
+            inputmode="url"
+            autocomplete="url"
+            placeholder="Paste JD link (https://…)"
+          />
+          <label class="field-label" for="match-text">Job description</label>
+          <textarea
+            id="match-text"
+            class="input-area"
+            rows="14"
+            placeholder="Paste the full job description…"
+          ></textarea>
+          <p class="muted" id="match-hint">Select a user and paste a link plus JD text.</p>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h2>Best profile match</h2>
+              <p class="muted">Select the profiles that should receive this JD, then send them to the Analyzer lists.</p>
+            </div>
+          </div>
+          <div id="match-results" class="match-results">
+            <div class="empty-state">
+              <strong>No match yet</strong>
+              <span>Paste a JD to rank this user’s profiles.</span>
+            </div>
+          </div>
+          <div class="composer-actions">
+            <button class="btn btn-analyze" type="button" id="match-assign" disabled>Send to analyze lists</button>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="match.js?v=1"></script>
+  </body>
+</html>

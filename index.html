@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=17" />
   </head>
   <body>
     <div class="app">
@@ -25,6 +25,7 @@
         <div class="topbar-end">
           <nav class="top-nav" aria-label="Primary">
             <a class="nav-link is-active" href="/">Analyzer</a>
+            <a class="nav-link" href="/intake" target="jd-intake" rel="noopener noreferrer">Match</a>
             <a class="nav-link" href="/dashboard">Dashboard</a>
           </nav>
           <p class="topbar-note">
@@ -38,12 +39,14 @@
           <section class="card" id="profiles-card">
             <div class="card-head">
               <div>
-                <h2>Profiles</h2>
-                <p class="muted">Keep a resume for each career track.</p>
+              <h2>Users & profiles</h2>
+              <p class="muted">Each user can have several named profiles.</p>
               </div>
-              <button class="btn btn-ghost" type="button" id="add-profile-btn">
-                + New profile
-              </button>
+              <div class="profile-head-actions">
+                <button class="btn btn-ghost" type="button" id="add-user-btn">+ New user</button>
+                <button class="btn btn-ghost" type="button" id="add-profile-btn">+ New profile</button>
+                <button class="btn btn-analyze" type="button" id="open-intake-btn">Match JD</button>
+              </div>
             </div>
             <div class="profile-list" id="profile-list"></div>
           </section>
@@ -90,6 +93,22 @@
                 <pre class="resume-body" id="resume-body"></pre>
               </div>
             </div>
+
+            <div class="resume-keywords">
+              <div class="resume-keywords-head">
+                <label class="field-label">Role tags & keywords</label>
+                <button class="btn btn-ghost" type="button" id="refresh-keywords-btn">Refresh</button>
+              </div>
+              <p class="muted">Role tags are job-family metadata. Keywords are skills and tools from the resume. Match uses both.</p>
+              <div class="tag-block">
+                <span class="field-label">Role tags</span>
+                <div class="keyword-cloud" id="profile-role-cloud"></div>
+              </div>
+              <div class="tag-block">
+                <span class="field-label">Keywords</span>
+                <div class="keyword-cloud" id="profile-keyword-cloud"></div>
+              </div>
+            </div>
           </section>
         </aside>
 
@@ -106,7 +125,9 @@
               <input
                 id="jd-url"
                 class="text-input"
-                type="url"
+                type="text"
+                inputmode="url"
+                autocomplete="url"
                 placeholder="Paste JD link (https://…)"
               />
               <textarea
@@ -121,7 +142,7 @@
                 </button>
               </div>
               <p class="muted" id="analyze-hint">
-                Each Analyze click adds the JD and starts scoring against the selected resume.
+                Each Analyze click starts a job. You can paste another URL and click Analyze again while others are still running.
               </p>
             </div>
 
@@ -146,7 +167,7 @@
                 <h2>Match results</h2>
                 <div class="results-title-row">
                   <p class="muted" id="results-subtitle">
-                    Overall score plus keyword, experience, location, and work style.
+                    Overall is keyword and experience only. Location is scored separately.
                   </p>
                   <div id="company-flag-slot"></div>
                 </div>
@@ -203,10 +224,16 @@
                 <p class="muted" id="workstyle-note"></p>
               </article>
 
+              <article class="note-panel note-knockout">
+                <h3>Knockouts</h3>
+                <p class="muted">Hard JD requirements. These do not change the overall score.</p>
+                <div id="knockout-list"></div>
+              </article>
+
               <article class="note-panel note-missing">
                 <h3>Missing keywords</h3>
-                <p class="muted">JD terms that are weak or absent on this resume.</p>
-                <div class="keyword-cloud" id="missing-keyword-cloud"></div>
+                <p class="muted">Required skills count more than preferred / nice-to-have.</p>
+                <div class="missing-groups" id="missing-keyword-cloud"></div>
               </article>
 
               <div class="split-notes">
@@ -301,24 +328,53 @@
       </form>
     </dialog>
 
+    <dialog class="modal" id="user-modal">
+      <form method="dialog" id="user-form">
+        <h2 id="user-modal-title">New user</h2>
+        <label class="field-label" for="user-name">User name</label>
+        <input id="user-name" class="text-input" type="text" placeholder="e.g. User 1" required />
+        <div class="modal-actions">
+          <button class="btn btn-ghost" type="button" id="user-modal-cancel">Cancel</button>
+          <button class="btn btn-primary" value="confirm" type="submit" id="user-modal-confirm">Create</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog class="modal" id="profile-modal">
       <form method="dialog" id="profile-form">
         <h2>New profile</h2>
+        <label class="field-label" for="profile-user">User</label>
+        <select id="profile-user" class="text-input" required></select>
         <label class="field-label" for="profile-name">Profile name</label>
         <input
           id="profile-name"
           class="text-input"
           type="text"
-          placeholder="e.g. Backend engineer"
+          placeholder="e.g. Kai Li"
           required
         />
+        <label class="field-label" for="profile-resume-file">Resume file</label>
+        <input
+          id="profile-resume-file"
+          class="text-input"
+          type="file"
+          accept=".pdf,.txt,.md,.doc,.docx,.rtf"
+        />
+        <label class="field-label" for="profile-resume-text">Or paste resume text</label>
+        <textarea
+          id="profile-resume-text"
+          class="input-area"
+          rows="6"
+          placeholder="Paste the resume for this profile…"
+        ></textarea>
+        <p class="muted">Role tags and keywords for Match are extracted automatically from this resume.</p>
         <div class="modal-actions">
-          <button class="btn btn-ghost" value="cancel" type="submit">Cancel</button>
+          <button class="btn btn-ghost" type="button" id="profile-modal-cancel">Cancel</button>
           <button class="btn btn-primary" value="confirm" type="submit">Create</button>
         </div>
       </form>
     </dialog>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=22"></script>
   </body>
 </html>

@@ -255,9 +255,239 @@ p {
   align-items: center;
 }
 
+.profile-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .profile-list {
   display: flex;
   flex-direction: column;
+  gap: 12px;
+}
+
+.user-group {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px dashed transparent;
+  border-radius: 14px;
+  min-height: 72px;
+}
+
+.user-group.is-drop-target {
+  border-color: var(--teal);
+  background: #f3faf7;
+}
+
+.user-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+.user-group-head strong {
+  font-size: 13px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.user-group-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.user-edit {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: 600 12px/1 "DM Sans", sans-serif;
+  padding: 4px 6px;
+}
+
+.user-edit:hover {
+  color: var(--ink);
+}
+
+.user-group-empty {
+  margin: 0 2px;
+}
+
+.resume-keywords {
+  margin-top: 16px;
+}
+
+.resume-keywords-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.resume-keywords-head .field-label {
+  margin: 0;
+}
+
+.resume-keywords .keyword-cloud {
+  margin-top: 8px;
+}
+
+.tag-block {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.tag-block .field-label {
+  margin: 0;
+  font-size: 12px;
+}
+
+.tag.is-role {
+  background: #e8f3ef;
+  color: var(--teal-deep);
+}
+
+.tag.is-skill {
+  background: #eef1fb;
+  color: #31406b;
+}
+
+.filter-user-group {
+  display: grid;
+  gap: 8px;
+  min-width: 220px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.filter-user-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.filter-user-name input {
+  margin: 0;
+  accent-color: var(--teal);
+}
+
+.filter-user-count {
+  display: inline-flex;
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.filter-user-profiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filter-user-empty {
+  margin: 0;
+  font-size: 12px;
+}
+
+.intake-app {
+  max-width: 1180px;
+}
+
+.intake-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+}
+
+.intake-matches {
+  display: grid;
+  gap: 10px;
+  min-height: 220px;
+}
+
+.intake-match {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.intake-match.is-top {
+  border-color: var(--teal);
+  background: #e8f3ef;
+}
+
+.intake-match.is-sent {
+  cursor: default;
+  opacity: 0.72;
+  background: #f3f4f2;
+}
+
+.intake-match.is-sent input {
+  cursor: default;
+}
+
+.intake-sent {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.intake-sent.hidden {
+  display: none;
+}
+
+.intake-sent-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.intake-sent-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.intake-match-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.intake-match-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
 }
 
@@ -271,9 +501,13 @@ p {
   background: var(--surface-2);
   border-radius: 14px;
   padding: 12px 14px;
-  cursor: pointer;
+  cursor: grab;
   font: inherit;
   color: inherit;
+}
+
+.profile-item.is-dragging {
+  opacity: 0.55;
 }
 
 .profile-item.active {
@@ -993,6 +1227,93 @@ p {
   margin-bottom: 10px;
 }
 
+.note-knockout {
+  background: #f8ecec;
+  color: #7f1d1d;
+  margin-bottom: 16px;
+}
+
+.note-knockout .muted {
+  margin-bottom: 12px;
+}
+
+.knockout-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.knockout-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.knockout-flag {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font: 700 11px/1 "DM Sans", sans-serif;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.knockout-item.is-fail .knockout-flag {
+  background: #7f1d1d;
+  color: #fff7f7;
+}
+
+.knockout-item.is-pass .knockout-flag {
+  background: #166534;
+  color: #f0fdf4;
+}
+
+.knockout-item.is-unknown .knockout-flag {
+  background: #92400e;
+  color: #fffbeb;
+}
+
+.knockout-item strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.knockout-item .muted {
+  margin: 0;
+}
+
+.missing-groups {
+  display: grid;
+  gap: 14px;
+}
+
+.missing-group h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.note-missing .tag.is-required {
+  background: #f3e0c8;
+  color: #9a3412;
+}
+
+.note-missing .tag.is-preferred {
+  background: #efe6d4;
+  color: #78716c;
+}
+
+.score-chip.knockout {
+  background: #f8ecec;
+  color: #7f1d1d;
+}
+
 .workstyle-badge {
   display: inline-flex;
   align-items: flex-start;
@@ -1062,7 +1383,8 @@ p {
 @media (max-width: 980px) {
   .workspace,
   .scoreboard,
-  .topbar {
+  .topbar,
+  .intake-grid {
     grid-template-columns: 1fr;
     display: grid;
   }
@@ -1103,9 +1425,10 @@ p {
 .profile-filter-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
   flex: 1;
+  align-items: stretch;
 }
 
 .profile-check {
@@ -1220,6 +1543,24 @@ p {
 
 .result-modal-head h2 {
   margin-bottom: 6px;
+}
+
+.result-modal-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.result-modal-head-actions .btn {
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+#result-modal-status {
+  margin: 8px 0 0;
+  min-height: 1.2em;
 }
 
 .result-modal .results-body {
