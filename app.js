@@ -246,7 +246,33 @@ function fillProfileUserSelect(preferredId) {
     .join("");
 }
 
+function captureProfileScroll() {
+  const boxes = {};
+  document.querySelectorAll(".user-group").forEach((group) => {
+    const box = group.querySelector(".user-group-profiles");
+    if (group.dataset.userId && box) boxes[group.dataset.userId] = box.scrollTop;
+  });
+  return { boxes, windowY: window.scrollY };
+}
+
+function restoreProfileScroll(saved) {
+  if (!saved) return;
+  document.querySelectorAll(".user-group").forEach((group) => {
+    const box = group.querySelector(".user-group-profiles");
+    const top = saved.boxes[group.dataset.userId];
+    if (box && Number.isFinite(top)) box.scrollTop = top;
+  });
+  if (Number.isFinite(saved.windowY)) window.scrollTo(0, saved.windowY);
+}
+
+function setActiveProfileButton(id) {
+  document.querySelectorAll("#profile-list .profile-item").forEach((button) => {
+    button.classList.toggle("active", button.dataset.profileId === id);
+  });
+}
+
 function renderProfiles() {
+  const savedScroll = captureProfileScroll();
   els.profileList.innerHTML = "";
   if (!state.users.length && !state.profiles.length) {
     els.profileList.innerHTML = `<div class="empty-state" style="min-height:90px"><span>Create a user, then add profiles under that user.</span></div>`;
@@ -321,6 +347,9 @@ function renderProfiles() {
       `;
       button.draggable = true;
       button.dataset.profileId = profile.id;
+      button.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+      });
       button.addEventListener("dragstart", (event) => {
         event.dataTransfer.setData("text/plain", profile.id);
         event.dataTransfer.effectAllowed = "move";
@@ -348,6 +377,7 @@ function renderProfiles() {
     group.appendChild(profileBox);
     els.profileList.appendChild(group);
   });
+  restoreProfileScroll(savedScroll);
 }
 
 function bindUserDropTarget(group, userId) {
@@ -1699,7 +1729,7 @@ async function loadResumePreview(profile) {
 
 async function selectProfile(id) {
   state.activeProfileId = id;
-  renderProfiles();
+  setActiveProfileButton(id);
   const profile = activeProfile();
   try {
     await loadResumePreview(profile);

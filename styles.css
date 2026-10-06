@@ -326,7 +326,7 @@ p {
 .user-group-profiles {
   display: grid;
   gap: 8px;
-  max-height: 240px;
+  max-height: 520px;
   overflow-y: auto;
   padding-right: 4px;
 }
