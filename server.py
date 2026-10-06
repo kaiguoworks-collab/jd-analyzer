@@ -769,6 +769,7 @@ ROLE_TAGS = (
     "Data Engineer",
     "AI/ML Engineer",
     "DevOps Engineer",
+    "Mobile Engineer",
 )
 
 _ROLE_TAG_PATTERNS = [
@@ -778,6 +779,7 @@ _ROLE_TAG_PATTERNS = [
     ("Data Engineer", (r"data engineer", r"data engineering", r"data pipeline", r"\betl\b", r"analytics engineer")),
     ("AI/ML Engineer", (r"\bai/ml\b", r"machine learning", r"\bml engineer\b", r"\bai engineer\b", r"deep learning", r"\bllm\b")),
     ("DevOps Engineer", (r"\bdevops\b", r"site reliability", r"\bsre\b", r"platform engineer")),
+    ("Mobile Engineer", (r"mobile engineer", r"mobile developer", r"\bios\b", r"android", r"react native", r"flutter")),
 ]
 
 _ROLE_ALIASES = {
@@ -805,6 +807,12 @@ _ROLE_ALIASES = {
     "dev ops engineer": "DevOps Engineer",
     "devops": "DevOps Engineer",
     "sre": "DevOps Engineer",
+    "mobile engineer": "Mobile Engineer",
+    "mobile developer": "Mobile Engineer",
+    "ios engineer": "Mobile Engineer",
+    "android engineer": "Mobile Engineer",
+    "ios developer": "Mobile Engineer",
+    "android developer": "Mobile Engineer",
 }
 
 
@@ -861,6 +869,8 @@ def classify_roles(text: str) -> tuple[str, list[str]]:
         guessed = ""
         if front and back:
             guessed = "Full Stack Engineer"
+        elif re.search(r"\bios\b|android|react native|flutter|mobile", head.lower()):
+            guessed = "Mobile Engineer"
         elif back:
             guessed = "Backend Engineer"
         elif front:
@@ -879,7 +889,7 @@ def classify_roles(text: str) -> tuple[str, list[str]]:
     headered = [item for item in ranked if item[0] > 0]
     main = (headered or ranked)[0][3]
     others = [item[3] for item in ranked if item[3] != main]
-    return main, others[:5]
+    return main, others[:6]
 
 
 def fallback_resume_roles(resume_text: str) -> list[str]:
@@ -977,7 +987,7 @@ def extract_profile_tags(resume_text: str) -> tuple[list[str], list[str], str, l
                         "Read the resume and return JSON only with this shape:\n"
                         '{"mainRoles":["Backend Engineer"],"roles":["AI/ML Engineer"],"location":"US California","keywords":["Python"]}\n'
                         "mainRoles and roles may use ONLY these titles: Backend Engineer, Frontend Engineer, "
-                        "Data Engineer, AI/ML Engineer, DevOps Engineer, Full Stack Engineer. "
+                        "Data Engineer, AI/ML Engineer, DevOps Engineer, Full Stack Engineer, Mobile Engineer. "
                         "mainRoles: the roles this resume is built around. One is enough; use more only when the resume is clearly more than one of those jobs. "
                         "roles: the other titles from that same list that are real secondary work. Do not repeat a main role. "
                         "Never invent Software Engineer, Data Scientist, or any title outside the list. Use an empty list when none fit.\n"
@@ -1004,7 +1014,7 @@ def extract_profile_tags(resume_text: str) -> tuple[list[str], list[str], str, l
             else:
                 mains = [parsed_roles[0]]
                 parsed_roles = parsed_roles[1:]
-            roles = [role for role in parsed_roles if role not in mains][:5]
+            roles = [role for role in parsed_roles if role not in mains][:6]
         location = canonicalize_location(parsed_location) or location
         return mains, roles, location, parsed_keywords or keywords
     except Exception:
@@ -1134,6 +1144,7 @@ _ROLE_FAMILIES = [
     ("machine learning", "ai"),
     ("devops engineer", "devops"),
     ("devops", "devops"),
+    ("mobile engineer", "mobile"),
 ]
 
 _FAMILY_FIT = {
@@ -1148,6 +1159,12 @@ _FAMILY_FIT = {
     frozenset({"frontend", "data-eng"}): 18,
     frozenset({"devops", "backend"}): 42,
     frozenset({"devops", "fullstack"}): 38,
+    frozenset({"mobile", "frontend"}): 64,
+    frozenset({"mobile", "fullstack"}): 52,
+    frozenset({"mobile", "backend"}): 34,
+    frozenset({"mobile", "ai"}): 30,
+    frozenset({"mobile", "devops"}): 24,
+    frozenset({"mobile", "data-eng"}): 16,
     frozenset({"devops", "frontend"}): 22,
     frozenset({"devops", "data-eng"}): 36,
     frozenset({"devops", "ai"}): 30,

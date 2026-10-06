@@ -489,7 +489,7 @@ function renderProfileKeywords(profile) {
     els.profileRoleCloud,
     profile?.roles,
     "other",
-    "No other roles from the six role tags."
+    "No other roles from the role tags."
   );
   renderTagCloud(
     els.profileLocation,
