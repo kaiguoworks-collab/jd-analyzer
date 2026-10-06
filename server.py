@@ -123,6 +123,12 @@ def init_db() -> None:
                 if "roles" not in profile_columns:
                     db.session.execute(text("ALTER TABLE profiles ADD COLUMN roles JSON"))
                     db.session.commit()
+                if "main_role" not in profile_columns:
+                    db.session.execute(text("ALTER TABLE profiles ADD COLUMN main_role VARCHAR(200) DEFAULT ''"))
+                    db.session.commit()
+                if "location" not in profile_columns:
+                    db.session.execute(text("ALTER TABLE profiles ADD COLUMN location VARCHAR(200) DEFAULT ''"))
+                    db.session.commit()
             ensure_default_user()
             return
         except OperationalError as error:
@@ -240,6 +246,28 @@ US_STATES = {
     "district of columbia": "Washington DC",
     "washington dc": "Washington DC",
     "washington, dc": "Washington DC",
+    "san francisco bay area": "California",
+    "san francisco": "California",
+    "bay area": "California",
+    "silicon valley": "California",
+    "los angeles": "California",
+    "san diego": "California",
+    "san jose": "California",
+    "sacramento": "California",
+    "seattle": "Washington",
+    "austin": "Texas",
+    "dallas": "Texas",
+    "houston": "Texas",
+    "nyc": "New York",
+    "brooklyn": "New York",
+    "manhattan": "New York",
+    "boston": "Massachusetts",
+    "chicago": "Illinois",
+    "atlanta": "Georgia",
+    "denver": "Colorado",
+    "miami": "Florida",
+    "phoenix": "Arizona",
+    "salt lake": "Utah",
 }
 
 US_STATE_ABBREV = {
@@ -760,20 +788,25 @@ def fallback_resume_roles(resume_text: str) -> list[str]:
     for label, patterns in _ROLE_TAG_PATTERNS:
         if any(re.search(pattern, blob) for pattern in patterns):
             tags.append(label)
-    if tags:
-        return tags[:8]
-    titles = re.findall(
-        r"\b((?:senior |staff |principal |lead )?(?:data |software |mechanical |electrical |civil |chemical |industrial |ai |ml |frontend |backend )?engineers?(?:ing)?|(?:data scientist|data analyst|product manager|project manager|ai/ml))\b",
-        blob[:2500],
-    )
-    cleaned = []
-    for title in titles:
-        label = " ".join(str(title).split()).strip(" .,-")
-        if label and label.lower() not in {item.lower() for item in cleaned}:
-            cleaned.append(label.title() if label.islower() else label)
-        if len(cleaned) >= 8:
+    return tags[:8]
+
+
+def fallback_location(resume_text: str) -> str:
+    return region_from_text(resume_text or "", prefer_header=True)
+
+
+def fallback_profile_focus(resume_text: str) -> tuple[str, list[str], str]:
+    tags = fallback_resume_roles(resume_text)
+    head = (resume_text or "")[:900].lower()
+    main = ""
+    for label, patterns in _ROLE_TAG_PATTERNS:
+        if any(re.search(pattern, head) for pattern in patterns):
+            main = label
             break
-    return cleaned[:8]
+    if not main and tags:
+        main = tags[0]
+    others = [tag for tag in tags if tag.lower() != main.lower()]
+    return main, others[:5], fallback_location(resume_text)
 
 
 def fallback_resume_keywords(resume_text: str) -> list[str]:
@@ -804,14 +837,14 @@ def looks_like_skill_keywords(keywords) -> bool:
     return False
 
 
-def extract_profile_tags(resume_text: str) -> tuple[list[str], list[str]]:
+def extract_profile_tags(resume_text: str) -> tuple[str, list[str], str, list[str]]:
     text = clip(resume_text)
     if not text.strip():
-        return [], []
-    fallback_roles = fallback_resume_roles(text)
-    fallback_keywords = fallback_resume_keywords(text)
+        return "", [], "", []
+    main_role, roles, location = fallback_profile_focus(text)
+    keywords = fallback_resume_keywords(text)
     if not os.getenv("OPENAI_API_KEY"):
-        return fallback_roles, fallback_keywords
+        return main_role, roles, location, keywords
     try:
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=45.0)
         completion = client.chat.completions.create(
@@ -822,30 +855,41 @@ def extract_profile_tags(resume_text: str) -> tuple[list[str], list[str]]:
                 {
                     "role": "system",
                     "content": (
-                        "Extract two lists from the resume.\n"
-                        "roles: 3-8 job-family / discipline tags. "
-                        'Good: "Data Engineer", "AI/ML", "Mechanical Engineer". '
-                        "Not skills, tools, verbs, or companies.\n"
-                        "keywords: 8-24 short skill, tool, language, and domain terms. "
-                        'Good: "Python", "Kubernetes", "Protection relays". '
-                        "No sentences, no duplicates, no soft skills like teamwork.\n"
-                        'JSON only: {"roles": ["Data Engineer"], "keywords": ["Python"]}.'
+                        "Read the resume and return JSON only with this shape:\n"
+                        '{"mainRole":"Backend Engineer","roles":["AI/ML"],"location":"US California","keywords":["Python"]}\n'
+                        "mainRole: exactly one primary job this resume is built around, such as Backend Engineer or Electrical Engineer. "
+                        "Not a skill, tool, company, or a list.\n"
+                        "roles: up to 5 other real specialties, such as AI/ML. Do not repeat mainRole. Do not list every past title.\n"
+                        "location: region only, never a city. US profiles are \"US\" plus the state, such as \"US California\" or \"US Texas\". "
+                        "Use \"US\" when the country is the United States but no state is given. "
+                        "Every other country is the country name only, such as \"Brazil\" or \"Canada\". Empty string if the resume never says.\n"
+                        "keywords: 8-24 skills, tools, and domain terms. No sentences and no soft skills."
                     ),
                 },
                 {"role": "user", "content": text[:12000]},
             ],
         )
         parsed = json.loads(completion.choices[0].message.content or "{}")
-        roles = parse_keywords(parsed.get("roles"), limit=8) or fallback_roles
-        keywords = parse_keywords(parsed.get("keywords"), limit=24) or fallback_keywords
-        return roles, keywords
+        parsed_main = str(parsed.get("mainRole") or "").strip()[:200]
+        parsed_roles = parse_keywords(parsed.get("roles"), limit=5)
+        parsed_location = str(parsed.get("location") or "").strip()[:200]
+        parsed_keywords = parse_keywords(parsed.get("keywords"), limit=24)
+        if parsed_main:
+            main_role = parsed_main
+        elif parsed_roles:
+            main_role = parsed_roles[0]
+        roles = [item for item in (parsed_roles or roles) if item.lower() != main_role.lower()]
+        location = canonicalize_location(parsed_location) or location
+        return main_role, roles[:5], location, parsed_keywords or keywords
     except Exception:
-        return fallback_roles, fallback_keywords
+        return main_role, roles, location, keywords
 
 
 def refresh_profile_keywords(profile: Profile) -> list[str]:
-    roles, keywords = extract_profile_tags(profile.resume_text or "")
-    profile.roles = roles
+    main_role, roles, location, keywords = extract_profile_tags(profile.resume_text or "")
+    profile.main_role = main_role[:200]
+    profile.roles = [item for item in roles if item.lower() != main_role.lower()]
+    profile.location = canonicalize_location(location)[:200]
     profile.keywords = keywords
     return keywords
 
@@ -853,17 +897,44 @@ def refresh_profile_keywords(profile: Profile) -> list[str]:
 def needs_tag_refresh(profile: Profile) -> bool:
     if not (profile.resume_text or "").strip():
         return False
-    roles = profile.roles or []
-    keywords = profile.keywords or []
-    if not roles or not keywords:
+    if not str(profile.main_role or "").strip():
         return True
-    return not looks_like_skill_keywords(keywords)
+    location = str(profile.location or "").strip()
+    if location and not is_region_location(location):
+        return True
+    if not location and fallback_location(profile.resume_text or ""):
+        return True
+    keywords = profile.keywords or []
+    if not keywords:
+        return True
+    return looks_like_skill_keywords(keywords)
 
 
-def ensure_metadata_keywords(profile: Profile) -> list[str]:
-    if not needs_tag_refresh(profile):
-        return profile.keywords or []
-    return refresh_profile_keywords(profile)
+def prepare_profile_for_match(profile: Profile) -> bool:
+    resume = profile.resume_text or ""
+    if not resume.strip():
+        return False
+    changed = False
+    stored = canonicalize_location(profile.location or "")
+    from_resume = fallback_location(resume)
+    location = stored or from_resume
+    if location == "US" and from_resume.startswith("US "):
+        location = from_resume
+    if location != (profile.location or ""):
+        profile.location = location
+        changed = True
+    if not str(profile.main_role or "").strip():
+        main_role, roles, _location = fallback_profile_focus(resume)
+        if main_role:
+            profile.main_role = main_role[:200]
+            changed = True
+        if main_role and not profile.roles and roles:
+            profile.roles = roles
+            changed = True
+    if not profile.keywords:
+        profile.keywords = fallback_resume_keywords(resume)
+        changed = True
+    return changed
 
 
 def keyword_variants(keyword: str) -> list[str]:
@@ -917,17 +988,403 @@ def match_terms(terms, jd_blob: str) -> tuple[list[str], list[str], int]:
     return matched, missed, score
 
 
-def rank_profiles_for_jd(profiles, jd_text: str) -> list[dict]:
+_ROLE_FAMILIES = [
+    ("backend engineer", "backend"),
+    ("back-end engineer", "backend"),
+    ("frontend engineer", "frontend"),
+    ("front-end engineer", "frontend"),
+    ("full stack", "fullstack"),
+    ("full-stack", "fullstack"),
+    ("software engineer", "software"),
+    ("data engineer", "data-eng"),
+    ("data scientist", "data-science"),
+    ("data analyst", "data-analyst"),
+    ("ai/ml", "ai"),
+    ("machine learning", "ai"),
+    ("ml engineer", "ai"),
+    ("ai engineer", "ai"),
+    ("electrical engineer", "electrical"),
+    ("mechanical engineer", "mechanical"),
+    ("civil engineer", "civil"),
+    ("chemical engineer", "chemical"),
+    ("protection engineer", "protection"),
+    ("power systems", "power"),
+    ("devops", "devops"),
+    ("product manager", "product"),
+    ("project manager", "project"),
+]
+
+_FAMILY_FIT = {
+    frozenset({"backend", "software"}): 64,
+    frozenset({"frontend", "software"}): 64,
+    frozenset({"fullstack", "software"}): 74,
+    frozenset({"fullstack", "backend"}): 70,
+    frozenset({"fullstack", "frontend"}): 70,
+    frozenset({"backend", "frontend"}): 28,
+    frozenset({"data-eng", "data-science"}): 58,
+    frozenset({"data-eng", "data-analyst"}): 46,
+    frozenset({"data-science", "ai"}): 72,
+    frozenset({"data-eng", "ai"}): 50,
+    frozenset({"backend", "ai"}): 42,
+    frozenset({"software", "ai"}): 40,
+    frozenset({"software", "data-eng"}): 36,
+    frozenset({"electrical", "power"}): 70,
+    frozenset({"electrical", "protection"}): 68,
+    frozenset({"power", "protection"}): 64,
+    frozenset({"devops", "backend"}): 40,
+    frozenset({"devops", "software"}): 38,
+}
+
+
+def _role_family(label: str) -> str:
+    raw = re.sub(r"\b(senior|staff|principal|lead|junior|jr)\b", " ", str(label or "").lower())
+    text = " ".join(raw.split())
+    spaced = " ".join(text.replace("/", " ").split())
+    for name, family in _ROLE_FAMILIES:
+        spaced_name = " ".join(name.replace("/", " ").split())
+        if name in text or spaced_name in spaced:
+            return family
+    return spaced
+
+
+def role_fit_score(profile_role: str, jd_role: str) -> int:
+    if not str(profile_role or "").strip() or not str(jd_role or "").strip():
+        return 0
+    left = _role_family(profile_role)
+    right = _role_family(jd_role)
+    if left == right:
+        return 92
+    return _FAMILY_FIT.get(frozenset({left, right}), 16)
+
+
+def detect_jd_role(jd_text: str) -> str:
+    head = (jd_text or "")[:1200].lower()
+    body = (jd_text or "").lower()
+    for source in (head, body):
+        for label, patterns in _ROLE_TAG_PATTERNS:
+            if any(re.search(pattern, source) for pattern in patterns):
+                return label
+    return ""
+
+
+_COUNTRIES = (
+    ("united states", "US"),
+    ("u.s.a.", "US"),
+    ("u.s.", "US"),
+    ("usa", "US"),
+    ("brazil", "Brazil"),
+    ("brasil", "Brazil"),
+    ("canada", "Canada"),
+    ("united kingdom", "United Kingdom"),
+    ("uk", "United Kingdom"),
+    ("india", "India"),
+    ("germany", "Germany"),
+    ("mexico", "Mexico"),
+    ("australia", "Australia"),
+    ("france", "France"),
+    ("spain", "Spain"),
+    ("portugal", "Portugal"),
+    ("argentina", "Argentina"),
+    ("colombia", "Colombia"),
+    ("chile", "Chile"),
+    ("netherlands", "Netherlands"),
+    ("ireland", "Ireland"),
+    ("singapore", "Singapore"),
+    ("japan", "Japan"),
+    ("south korea", "South Korea"),
+    ("philippines", "Philippines"),
+    ("poland", "Poland"),
+    ("nigeria", "Nigeria"),
+    ("south africa", "South Africa"),
+    ("new zealand", "New Zealand"),
+    ("italy", "Italy"),
+    ("sweden", "Sweden"),
+    ("israel", "Israel"),
+    ("united arab emirates", "United Arab Emirates"),
+)
+
+
+def is_region_location(value: str) -> bool:
+    text = str(value or "").strip()
+    if text == "US":
+        return True
+    if text.startswith("US "):
+        return text[3:].strip() in set(US_STATES.values())
+    return text in {label for _name, label in _COUNTRIES if label != "US"}
+
+
+def us_states_in(text: str) -> list[str]:
+    lowered = (text or "").lower()
+    found = []
+    for name, label in sorted(US_STATES.items(), key=lambda item: len(item[0]), reverse=True):
+        if label == "Washington" and "Washington DC" in found:
+            continue
+        if re.search(rf"\b{re.escape(name)}\b", lowered) and label not in found:
+            found.append(label)
+    for abbrev, label in US_STATE_ABBREV.items():
+        if label in found:
+            continue
+        if re.search(rf"(?:,|\()\s*{re.escape(abbrev)}\b", lowered):
+            found.append(label)
+    return found
+
+
+def countries_in(text: str) -> list[str]:
+    lowered = (text or "").lower()
+    found = []
+    for name, label in sorted(_COUNTRIES, key=lambda item: len(item[0]), reverse=True):
+        if label in found:
+            continue
+        if re.search(rf"\b{re.escape(name)}\b", lowered):
+            found.append(label)
+    return found
+
+
+def mentions_us_country(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(
+        term in lowered
+        for term in (
+            "united states",
+            "u.s.a.",
+            "u.s.",
+            "usa",
+            "us-based",
+            "us based",
+            "us remote",
+            "remote us",
+            "remote in the us",
+            "anywhere in the us",
+            "within the us",
+            "must be in the us",
+            "located in the us",
+            "reside in the us",
+            "work from the us",
+        )
+    )
+
+
+def format_region(country: str, state: str = "") -> str:
+    if country == "US" and state:
+        return f"US {state}"
+    if country == "US":
+        return "US"
+    return country or ""
+
+
+def region_from_text(text: str, prefer_header: bool = False) -> str:
+    chunks = [text[:800], text[:2500]] if prefer_header else [text]
+    for chunk in chunks:
+        states = us_states_in(chunk)
+        if states:
+            return format_region("US", states[0])
+        countries = [item for item in countries_in(chunk) if item != "US"]
+        if countries:
+            return countries[0]
+        if mentions_us_country(chunk) or "US" in countries_in(chunk):
+            return "US"
+    return ""
+
+
+def canonicalize_location(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if is_region_location(text):
+        return text
+    if text.lower().startswith("us "):
+        state = text[3:].strip()
+        for label in US_STATES.values():
+            if label.lower() == state.lower():
+                return f"US {label}"
+    region = region_from_text(text)
+    return region
+
+
+def jd_allowed_regions(jd_text: str) -> list[str]:
+    states = us_states_in(jd_text)
+    countries = countries_in(jd_text)
+    regions = [format_region("US", state) for state in states]
+    if not states and (mentions_us_country(jd_text) or "US" in countries):
+        regions.append("US")
+    for country in countries:
+        if country != "US" and country not in regions:
+            regions.append(country)
+    return regions
+
+
+def region_matches(profile_region: str, allowed: list[str]) -> bool:
+    if not profile_region or not allowed:
+        return False
+    if profile_region in allowed:
+        return True
+    if profile_region.startswith("US ") and "US" in allowed:
+        return True
+    return False
+
+
+def detect_jd_location(jd_text: str) -> str:
+    regions = jd_allowed_regions(jd_text)
+    if regions:
+        return ", ".join(regions)
+    if re.search(r"\b(remote|work from home)\b", (jd_text or "").lower()):
+        return "Remote"
+    return ""
+
+
+def location_fit(profile_location: str, jd_text: str) -> tuple[str, str]:
+    region = canonicalize_location(profile_location)
+    if not region:
+        return "unknown", "No region such as US California or Brazil is saved on this profile."
+    allowed = jd_allowed_regions(jd_text)
+    jd_label = ", ".join(allowed)
+    if not allowed:
+        if re.search(r"\b(remote|work from home)\b", (jd_text or "").lower()):
+            return "match", f"JD does not limit a country. Profile region is {region}."
+        return "unknown", f"JD does not name a country or US state. Profile region is {region}."
+    if region_matches(region, allowed):
+        return "match", f"Profile region {region} fits JD location {jd_label}."
+    return "mismatch", f"Profile region {region} does not fit JD location {jd_label}."
+
+
+def additional_role_fit(role: str, jd_role: str, jd_text: str) -> int:
+    fit = role_fit_score(role, jd_role)
+    if fit >= 80:
+        return fit
+    patterns = []
+    for label, label_patterns in _ROLE_TAG_PATTERNS:
+        if label.lower() == str(role or "").strip().lower() or _role_family(label) == _role_family(role):
+            patterns = label_patterns
+            break
+    head = (jd_text or "")[:1600].lower()
+    body = (jd_text or "").lower()
+    if patterns and any(re.search(pattern, head) for pattern in patterns):
+        return max(fit, 74)
+    if patterns and any(re.search(pattern, body) for pattern in patterns):
+        return max(fit, 48)
+    return min(fit, 30)
+
+
+def fallback_focus_scores(profile: Profile, jd_text: str, jd_role: str) -> dict:
+    main_role = str(profile.main_role or "").strip()
+    roles = [str(item).strip() for item in (profile.roles or []) if str(item).strip()]
+    additional = [
+        {"role": role, "score": additional_role_fit(role, jd_role, jd_text)}
+        for role in roles
+    ]
+    status, note = location_fit(profile.location or "", jd_text)
+    return {
+        "mainRoleScore": role_fit_score(main_role, jd_role),
+        "additionalRoles": additional,
+        "locationMatch": status,
+        "locationNote": note,
+    }
+
+
+def llm_focus_scores(profiles, jd_text: str, jd_role: str) -> dict:
+    if not profiles or not os.getenv("OPENAI_API_KEY"):
+        return {}
+    brief = [
+        {
+            "profileId": profile.id,
+            "mainRole": profile.main_role or "",
+            "roles": profile.roles or [],
+            "location": profile.location or "",
+        }
+        for profile in profiles
+    ]
+    try:
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=60.0)
+        completion = client.chat.completions.create(
+            model=MODEL,
+            temperature=0.1,
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Score how well each profile's role focus fits the job being hired, and whether the profile location fits the JD. "
+                        "Do not score a role highly just because one of its words appears in the JD. "
+                        "mainRoleScore is 0-100 for the single main role versus the role the JD is actually hiring. "
+                        "Same role family is 80-100. A nearby role is 40-75. A different discipline is 0-25. "
+                        "additionalRoles scores how much each extra specialty, such as AI/ML, is actually part of this job. "
+                        "locationMatch is match, mismatch, or unknown. "
+                        "Match when the profile can work where the JD allows, including a remote region that contains the profile location. "
+                        "Mismatch when the JD requires a different place or onsite work the profile location does not satisfy. "
+                        'JSON only: {"jdRole":"Backend Engineer","jdLocation":"US Remote","results":[{"profileId":"...","mainRoleScore":80,"additionalRoles":[{"role":"AI/ML","score":60}],"locationMatch":"match","locationNote":"..."}]}'
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {"hintJdRole": jd_role, "jobDescription": (jd_text or "")[:12000], "profiles": brief}
+                    ),
+                },
+            ],
+        )
+        parsed = json.loads(completion.choices[0].message.content or "{}")
+    except Exception:
+        return {}
+    found = {}
+    for item in parsed.get("results") or []:
+        if not isinstance(item, dict):
+            continue
+        profile_id = str(item.get("profileId") or "").strip()
+        if not profile_id:
+            continue
+        status = str(item.get("locationMatch") or "unknown").lower()
+        if status not in {"match", "mismatch", "unknown"}:
+            status = "unknown"
+        additional = []
+        for role_item in item.get("additionalRoles") or []:
+            if not isinstance(role_item, dict):
+                continue
+            label = str(role_item.get("role") or "").strip()
+            if not label:
+                continue
+            additional.append({"role": label, "score": clamp_score(role_item.get("score"))})
+        found[profile_id] = {
+            "jdRole": str(parsed.get("jdRole") or "").strip(),
+            "jdLocation": str(parsed.get("jdLocation") or "").strip(),
+            "mainRoleScore": clamp_score(item.get("mainRoleScore")),
+            "additionalRoles": additional,
+            "locationMatch": status,
+            "locationNote": str(item.get("locationNote") or "").strip(),
+        }
+    return found
+
+
+def combine_role_score(main_score: int, additional: list[dict]) -> int:
+    helpful = [clamp_score(item.get("score")) for item in additional if clamp_score(item.get("score")) >= 40]
+    if not helpful:
+        return clamp_score(main_score)
+    return clamp_score(round(clamp_score(main_score) * 0.75 + max(helpful) * 0.25))
+
+
+def rank_profiles_for_jd(profiles, jd_text: str) -> tuple[list[dict], dict]:
     blob = (jd_text or "").lower()
+    jd_role = detect_jd_role(jd_text)
+    jd_location = detect_jd_location(jd_text)
     ranked = []
     for profile in profiles:
-        roles = [str(item).strip() for item in (profile.roles or []) if str(item).strip()]
         keywords = [str(item).strip() for item in (profile.keywords or []) if str(item).strip()]
-        matched_roles, missed_roles, role_score = match_terms(roles, blob)
         matched_keywords, missed_keywords, keyword_score = match_terms(keywords, blob)
-        if roles and keywords:
+        scored = fallback_focus_scores(profile, jd_text, jd_role)
+        main_role = str(profile.main_role or "").strip()
+        main_score = clamp_score(scored.get("mainRoleScore"))
+        additional = scored.get("additionalRoles") or []
+        known_roles = {item.lower(): item for item in (profile.roles or [])}
+        if not additional and known_roles:
+            additional = [
+                {"role": role, "score": additional_role_fit(role, jd_role, jd_text)}
+                for role in known_roles.values()
+            ]
+        role_score = combine_role_score(main_score, additional)
+        region = canonicalize_location(profile.location or "")
+        location_status, location_note = location_fit(region, jd_text)
+        if main_role and keywords:
             score = clamp_score(round(role_score * 0.6 + keyword_score * 0.4))
-        elif roles:
+        elif main_role:
             score = role_score
         else:
             score = keyword_score
@@ -937,25 +1394,31 @@ def rank_profiles_for_jd(profiles, jd_text: str) -> list[dict]:
                 "profileName": profile.name,
                 "userId": profile.user_id or "",
                 "userName": profile.user.name if profile.user else "",
-                "roles": roles,
+                "mainRole": main_role,
+                "mainRoleScore": main_score,
+                "roles": [item.get("role") for item in additional if item.get("role")],
+                "additionalRoles": additional,
                 "keywords": keywords,
-                "matchedRoles": matched_roles,
-                "missingRoles": missed_roles,
                 "matchedKeywords": matched_keywords,
                 "missingKeywords": missed_keywords,
                 "roleScore": role_score,
                 "keywordScore": keyword_score,
+                "location": region,
+                "locationMatch": location_status,
+                "locationNote": location_note,
+                "jdRole": jd_role,
+                "jdLocation": jd_location,
                 "score": score,
                 "hasResume": bool((profile.resume_text or "").strip()),
                 "topMatch": False,
             }
         )
-    ranked.sort(key=lambda item: (-item["score"], -item["roleScore"], -item["keywordScore"], item["profileName"].lower()))
+    ranked.sort(key=lambda item: (-item["score"], -item["mainRoleScore"], -item["keywordScore"], item["profileName"].lower()))
     if ranked and ranked[0]["score"] > 0:
         top = ranked[0]["score"]
         for item in ranked:
             item["topMatch"] = item["score"] == top
-    return ranked
+    return ranked, {"jdRole": jd_role, "jdLocation": jd_location}
 
 
 def execute_analyze(profile_id, profile_name, resume_text, keywords, job_descriptions, roles=None):
@@ -1196,10 +1659,25 @@ def profile_upload_dir(profile_id: str) -> Path:
     return path
 
 
+def resolve_resume_path(stored: str) -> Path:
+    path = Path(stored)
+    if not path.is_absolute():
+        path = ROOT / path
+    return path
+
+
+def stored_resume_path(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(ROOT).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
 def delete_resume_file(profile: Profile) -> None:
     if not profile.resume_path:
         return
-    path = Path(profile.resume_path)
+    path = resolve_resume_path(profile.resume_path)
     if path.is_file():
         path.unlink(missing_ok=True)
     folder = UPLOAD_ROOT / profile.id
@@ -1341,6 +1819,8 @@ def update_profile(profile_id: str):
         profile.resume_type = ""
         profile.keywords = []
         profile.roles = []
+        profile.main_role = ""
+        profile.location = ""
     profile.updated_at = utcnow()
     db.session.commit()
     if body.get("log", True):
@@ -1403,7 +1883,7 @@ def upload_resume(profile_id: str):
     profile.resume_text = clip(text)
     profile.resume_name = uploaded.filename[:500]
     profile.resume_type = (uploaded.mimetype or "")[:200]
-    profile.resume_path = str(saved_path)
+    profile.resume_path = stored_resume_path(saved_path)
     profile.updated_at = utcnow()
     db.session.commit()
     add_log(
@@ -1426,7 +1906,7 @@ def download_resume_file(profile_id: str):
         return error
     if not profile.resume_path:
         return jsonify({"error": "No resume file stored for this profile."}), 404
-    path = Path(profile.resume_path)
+    path = resolve_resume_path(profile.resume_path)
     if not path.is_file():
         return jsonify({"error": "Stored resume file is missing."}), 404
     return send_from_directory(path.parent, path.name, as_attachment=False)
@@ -1733,6 +2213,27 @@ def extract_text():
     return jsonify({"text": clip(text)})
 
 
+@app.get("/api/jobs/status")
+def jobs_status():
+    ids = [item.strip() for item in str(request.args.get("ids") or "").split(",") if item.strip()][:40]
+    if not ids:
+        return jsonify({"jobs": []})
+    jobs = db.session.execute(db.select(JobDescription).where(JobDescription.id.in_(ids))).scalars().all()
+    return jsonify(
+        {
+            "jobs": [
+                {
+                    "id": job.id,
+                    "profileId": job.profile_id,
+                    "status": job.status or "",
+                    "error": job.error or "",
+                }
+                for job in jobs
+            ]
+        }
+    )
+
+
 @app.post("/api/intake/rank")
 def intake_rank():
     body = request.get_json(silent=True) or {}
@@ -1744,19 +2245,22 @@ def intake_rank():
     if error:
         return error
     refreshed = False
-    for profile in user.profiles:
-        before_keywords = list(profile.keywords or [])
-        before_roles = list(profile.roles or [])
-        ensure_metadata_keywords(profile)
-        if list(profile.keywords or []) != before_keywords or list(profile.roles or []) != before_roles:
-            refreshed = True
-    if refreshed:
-        db.session.commit()
-    matches = rank_profiles_for_jd(user.profiles, text)
+    try:
+        for profile in user.profiles:
+            if prepare_profile_for_match(profile):
+                refreshed = True
+        if refreshed:
+            db.session.commit()
+        matches, focus = rank_profiles_for_jd(user.profiles, text)
+    except Exception as error:
+        db.session.rollback()
+        return jsonify({"error": str(error) or "Matching failed."}), 500
     return jsonify(
         {
             "user": user.to_dict(),
             "url": str(body.get("url") or "").strip(),
+            "jdRole": focus.get("jdRole") or "",
+            "jdLocation": focus.get("jdLocation") or "",
             "matches": matches,
         }
     )

@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=17" />
+    <link rel="stylesheet" href="styles.css?v=20" />
   </head>
   <body>
     <div class="app intake-app">
@@ -37,7 +37,7 @@
           <div class="card-head">
             <div>
               <h2>Job description</h2>
-              <p class="muted">Matching uses each profile’s role tags and resume keywords, not the full resume text.</p>
+              <p class="muted">Matching scores each profile’s main role against the job, then checks whether the profile region (US California, Brazil) fits the JD.</p>
             </div>
           </div>
           <label class="field-label" for="intake-user">User</label>
@@ -55,7 +55,7 @@
           <textarea
             id="intake-text"
             class="input-area"
-            rows="12"
+            rows="8"
             placeholder="Paste the job description…"
           ></textarea>
           <p class="muted" id="intake-hint">Choose a user, then paste a link and JD. Matching starts automatically.</p>
@@ -68,21 +68,21 @@
               <p class="muted">Top combined role + keyword match is selected. Change the set, then send them to analyze lists.</p>
             </div>
           </div>
+          <div class="composer-actions intake-send-bar">
+            <button class="btn btn-analyze" type="button" id="intake-send" disabled>
+              Send to analyze lists
+            </button>
+          </div>
           <div id="intake-matches" class="intake-matches">
             <div class="empty-state">
               <strong>No match yet</strong>
               <span>Paste a job description to rank this user’s profiles.</span>
             </div>
           </div>
-          <div class="composer-actions">
-            <button class="btn btn-analyze" type="button" id="intake-send" disabled>
-              Send to analyze lists
-            </button>
-          </div>
           <div id="intake-sent" class="intake-sent hidden"></div>
         </section>
       </main>
     </div>
-    <script src="intake.js?v=4"></script>
+    <script src="intake.js?v=7"></script>
   </body>
 </html>

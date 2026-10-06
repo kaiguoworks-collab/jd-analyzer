@@ -18,6 +18,14 @@ const state = {
   rankTimer: null,
   rankInFlight: false,
   lastRankKey: "",
+  jdRole: "",
+  jdLocation: "",
+  rankStatus: "idle",
+  rankError: "",
+  rankQueued: false,
+  sentJobs: {},
+  statusTimer: null,
+  sendBusy: false,
 };
 
 function escapeHtml(value) {
@@ -65,21 +73,40 @@ function tagCloud(items, emptyText, tagClass) {
     .join("");
 }
 
+function locationLabel(status) {
+  if (status === "match") return "Matched";
+  if (status === "mismatch") return "Not matched";
+  return "Unknown";
+}
+
+function locationTone(status) {
+  if (status === "match") return "high";
+  if (status === "mismatch") return "low";
+  return "mid";
+}
+
+function otherRoleCloud(items) {
+  const roles = Array.isArray(items) ? items.filter((item) => item && item.role) : [];
+  if (!roles.length) return `<span class="muted">No extra roles</span>`;
+  return roles
+    .map(
+      (item) =>
+        `<span class="tag is-role">${escapeHtml(item.role)} <b>${Number(item.score) || 0}%</b></span>`
+    )
+    .join("");
+}
+
 function matchCard(item, sent) {
   const checked = sent || state.selectedIds.has(item.profileId) ? " checked" : "";
   const disabled = sent ? " disabled" : "";
   const note = item.hasResume
     ? ""
     : `<p class="muted">No resume on this profile yet. Full analyze will fail until one is added.</p>`;
-  const roleCount = item.roles?.length || 0;
-  const keywordCount = item.keywords?.length || 0;
-  const summary = [
-    roleCount ? `${roleCount} role tag${roleCount === 1 ? "" : "s"}` : "No role tags",
-    keywordCount ? `${keywordCount} keyword${keywordCount === 1 ? "" : "s"}` : "No keywords",
-  ].join(" · ");
   const classes = ["intake-match"];
   if (item.topMatch && !sent) classes.push("is-top");
   if (sent) classes.push("is-sent");
+  const mainRole = item.mainRole || "No main role";
+  const location = item.location || "No location";
   return `
     <label class="${classes.join(" ")}">
       <input type="checkbox" data-profile-id="${escapeHtml(item.profileId)}"${checked}${disabled} />
@@ -88,21 +115,53 @@ function matchCard(item, sent) {
           <strong>${escapeHtml(item.profileName)}</strong>
           <span class="score-chip ${scoreTone(item.score)}">${item.score}%</span>
           ${item.topMatch && !sent ? `<span class="score-chip high">Top match</span>` : ""}
-          ${sent ? `<span class="score-chip mid">Sent</span>` : ""}
+          ${sent ? sentStatusHtml(item.profileId) : ""}
         </div>
-        <p class="muted">${escapeHtml(summary)}</p>
         <div class="tag-block">
-          <span class="field-label">Role tags</span>
-          <div class="keyword-cloud">${tagCloud(item.matchedRoles, "No role-tag hits", "is-role")}</div>
+          <span class="field-label">Main role</span>
+          <div class="keyword-cloud">
+            <span class="tag is-role">${escapeHtml(mainRole)}</span>
+            <span class="score-chip ${scoreTone(item.mainRoleScore)}">${Number(item.mainRoleScore) || 0}%</span>
+          </div>
+        </div>
+        <div class="tag-block">
+          <span class="field-label">Other roles</span>
+          <div class="keyword-cloud">${otherRoleCloud(item.additionalRoles)}</div>
+        </div>
+        <div class="tag-block">
+          <span class="field-label">Location</span>
+          <div class="keyword-cloud">
+            <span class="tag">${escapeHtml(location)}</span>
+            <span class="score-chip ${locationTone(item.locationMatch)}">${locationLabel(item.locationMatch)}</span>
+          </div>
+          <p class="muted">${escapeHtml(item.locationNote || "")}</p>
         </div>
         <div class="tag-block">
           <span class="field-label">Keywords</span>
           <div class="keyword-cloud">${tagCloud(item.matchedKeywords, "No keyword hits", "is-skill")}</div>
         </div>
         ${note}
+        ${sent ? sentErrorHtml(item.profileId) : ""}
       </div>
     </label>
   `;
+}
+
+function sentStatusHtml(profileId) {
+  const job = state.sentJobs[profileId];
+  if (job?.status === "failed") {
+    return `<span class="jd-status failed">Failed</span>`;
+  }
+  if (job?.status === "completed") {
+    return `<span class="score-chip high">Analyzed</span>`;
+  }
+  return `<span class="jd-status analyzing"><span class="spinner" aria-hidden="true"></span> Analyzing…</span>`;
+}
+
+function sentErrorHtml(profileId) {
+  const job = state.sentJobs[profileId];
+  if (job?.status !== "failed") return "";
+  return `<p class="jd-status failed">Analyzing failed: ${escapeHtml(job.error || "Unknown error")}</p>`;
 }
 
 function availableMatches() {
@@ -131,22 +190,57 @@ function renderSent() {
   `;
 }
 
+function statusBanner(kind, title, detail) {
+  const spinner =
+    kind === "loading" ? `<span class="spinner" aria-hidden="true"></span>` : "";
+  return `<div class="empty-state is-${kind}">${spinner}<strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span></div>`;
+}
+
+function setHint(message, tone) {
+  if (!els.hint) return;
+  if (tone === "loading") {
+    els.hint.innerHTML = `<span class="jd-status analyzing"><span class="spinner" aria-hidden="true"></span> ${escapeHtml(message)}</span>`;
+    return;
+  }
+  if (tone === "failed") {
+    els.hint.innerHTML = `<span class="jd-status failed">${escapeHtml(message)}</span>`;
+    return;
+  }
+  els.hint.textContent = message;
+}
+
+function setSendBusy(busy) {
+  state.sendBusy = busy;
+  if (!els.send) return;
+  els.send.disabled = busy || selectedProfileIds().length === 0;
+  els.send.innerHTML = busy
+    ? `<span class="spinner" aria-hidden="true"></span> Sending…`
+    : "Send to analyze lists";
+}
+
 function renderMatches() {
   if (!els.matches) return;
   const available = availableMatches();
+  const banner =
+    state.rankStatus === "loading"
+      ? statusBanner("loading", "Matching profiles", "Scoring main role, extra roles, keywords, and location.")
+      : state.rankStatus === "failed"
+        ? statusBanner("failed", "Matching failed", state.rankError || "The match did not complete.")
+        : "";
   if (!state.matches.length) {
-    els.matches.innerHTML = `<div class="empty-state"><strong>No match yet</strong><span>Paste a job description to rank this user’s profiles.</span></div>`;
+    els.matches.innerHTML =
+      banner ||
+      `<div class="empty-state"><strong>No match yet</strong><span>Paste a job description to rank this user’s profiles.</span></div>`;
     renderSent();
-    if (els.send) els.send.disabled = true;
+    if (els.send && !state.sendBusy) els.send.disabled = true;
     return;
   }
-  if (!available.length) {
-    els.matches.innerHTML = `<div class="empty-state"><strong>All selected profiles sent</strong><span>Those profiles are listed below and cannot be sent again for this JD.</span></div>`;
-  } else {
-    els.matches.innerHTML = available.map((item) => matchCard(item, false)).join("");
-  }
+  const cards = !available.length
+    ? `<div class="empty-state"><strong>All selected profiles sent</strong><span>Those profiles are listed below and cannot be sent again for this JD.</span></div>`
+    : available.map((item) => matchCard(item, false)).join("");
+  els.matches.innerHTML = `${banner}${cards}`;
   renderSent();
-  if (els.send) els.send.disabled = selectedProfileIds().length === 0;
+  if (els.send && !state.sendBusy) els.send.disabled = selectedProfileIds().length === 0;
 }
 
 function selectedProfileIds() {
@@ -157,6 +251,41 @@ function selectedProfileIds() {
 
 function clearSent() {
   state.sentIds = new Set();
+  state.sentJobs = {};
+  clearTimeout(state.statusTimer);
+  state.statusTimer = null;
+}
+
+function analyzingJobIds() {
+  return Object.values(state.sentJobs)
+    .filter((job) => job.status === "analyzing" && job.id)
+    .map((job) => job.id);
+}
+
+function scheduleStatusPoll() {
+  clearTimeout(state.statusTimer);
+  if (!analyzingJobIds().length) return;
+  state.statusTimer = setTimeout(() => {
+    pollSentStatus().catch(() => scheduleStatusPoll());
+  }, 4000);
+}
+
+async function pollSentStatus() {
+  const ids = analyzingJobIds();
+  if (!ids.length) return;
+  const data = await apiJson(`/api/jobs/status?ids=${encodeURIComponent(ids.join(","))}`);
+  let changed = false;
+  (data.jobs || []).forEach((job) => {
+    if (!job.profileId || !state.sentJobs[job.profileId]) return;
+    const nextStatus = job.status || state.sentJobs[job.profileId].status;
+    const nextError = job.error || "";
+    if (state.sentJobs[job.profileId].status !== nextStatus || state.sentJobs[job.profileId].error !== nextError) {
+      state.sentJobs[job.profileId] = { id: job.id, status: nextStatus, error: nextError };
+      changed = true;
+    }
+  });
+  if (changed) renderSent();
+  scheduleStatusPoll();
 }
 
 function notifyInbox(payload) {
@@ -180,21 +309,30 @@ async function rankMatches() {
   const text = (els.text?.value || "").trim();
   const key = `${userId}\n${text}`;
   if (!userId) {
-    els.hint.textContent = "Create a user on the Analyzer page first.";
+    setHint("Create a user on the Analyzer page first.");
     return;
   }
   if (text.length < 20) {
     state.matches = [];
     state.selectedIds = new Set();
+    state.rankStatus = "idle";
+    state.rankError = "";
     clearSent();
     state.lastRankKey = "";
     renderMatches();
-    els.hint.textContent = "Paste a fuller job description to rank this user’s profiles.";
+    setHint("Paste a fuller job description to rank this user’s profiles.");
     return;
   }
-  if (state.rankInFlight || key === state.lastRankKey) return;
+  if (state.rankInFlight) {
+    state.rankQueued = true;
+    return;
+  }
+  if (key === state.lastRankKey && state.rankStatus === "idle") return;
   state.rankInFlight = true;
-  els.hint.textContent = "Matching role tags and keywords against this JD…";
+  state.rankStatus = "loading";
+  state.rankError = "";
+  renderMatches();
+  setHint("Matching profiles…", "loading");
   try {
     const data = await apiJson("/api/intake/rank", {
       method: "POST",
@@ -203,6 +341,9 @@ async function rankMatches() {
     });
     if (state.lastRankKey && state.lastRankKey !== key) clearSent();
     state.lastRankKey = key;
+    state.rankStatus = "idle";
+    state.jdRole = data.jdRole || "";
+    state.jdLocation = data.jdLocation || "";
     state.matches = Array.isArray(data.matches) ? data.matches : [];
     state.selectedIds = new Set(
       state.matches
@@ -215,13 +356,28 @@ async function rankMatches() {
     }
     renderMatches();
     const top = state.matches.find((item) => item.topMatch) || state.matches[0];
-    els.hint.textContent = top
-      ? `Top match: ${top.profileName} (${top.score}%). Select profiles and send them to analyze lists.`
-      : "No role or keyword overlap yet. Add a resume on each profile so both can be extracted.";
+    const jdBits = [state.jdRole, state.jdLocation].filter(Boolean).join(" · ");
+    setHint(
+      top
+        ? `${jdBits ? `JD: ${jdBits}. ` : ""}Top match: ${top.profileName} (${top.score}%, main role ${top.mainRoleScore || 0}%).`
+        : "No role fit yet. Add a resume so a main role and location can be extracted."
+    );
   } catch (error) {
-    els.hint.textContent = error.message || "Could not rank profiles.";
+    state.rankStatus = "failed";
+    state.rankError = error.message || "Matching failed.";
+    renderMatches();
+    setHint(`Matching failed: ${state.rankError}`, "failed");
   } finally {
     state.rankInFlight = false;
+    if (state.rankQueued) {
+      state.rankQueued = false;
+      rankMatches().catch((error) => {
+        state.rankStatus = "failed";
+        state.rankError = error.message || "Matching failed.";
+        renderMatches();
+        setHint(`Matching failed: ${state.rankError}`, "failed");
+      });
+    }
   }
 }
 
@@ -229,7 +385,10 @@ function scheduleRank() {
   clearTimeout(state.rankTimer);
   state.rankTimer = setTimeout(() => {
     rankMatches().catch((error) => {
-      els.hint.textContent = error.message || "Could not rank profiles.";
+      state.rankStatus = "failed";
+      state.rankError = error.message || "Matching failed.";
+      renderMatches();
+      setHint(`Matching failed: ${state.rankError}`, "failed");
     });
   }, 700);
 }
@@ -239,11 +398,11 @@ async function sendToLists() {
   const text = (els.text?.value || "").trim();
   const profileIds = selectedProfileIds();
   if (!profileIds.length) {
-    els.hint.textContent = "Select at least one profile.";
+    setHint("Select at least one profile.");
     return;
   }
-  els.send.disabled = true;
-  els.hint.textContent = "Sending this JD to the selected profile lists…";
+  setSendBusy(true);
+  setHint("Sending this JD to the selected profile lists…", "loading");
   try {
     const data = await apiJson("/api/intake/assign", {
       method: "POST",
@@ -263,17 +422,31 @@ async function sendToLists() {
       state.sentIds.add(id);
       state.selectedIds.delete(id);
     });
+    (data.jobs || []).forEach((job) => {
+      if (!job?.profileId) return;
+      state.sentJobs[job.profileId] = {
+        id: job.id,
+        status: job.status || "analyzing",
+        error: job.error || "",
+      };
+    });
+    scheduleStatusPoll();
     const next = availableMatches()[0];
     if (next) state.selectedIds.add(next.profileId);
     renderMatches();
     const names = profileIds
       .map((id) => state.matches.find((item) => item.profileId === id)?.profileName || "profile")
       .join(", ");
-    els.hint.textContent = `Sent to ${names}. Those profiles are disabled below. Full resume analyze is running in the Analyzer window.`;
+    const failed = (data.jobs || []).filter((job) => job.status === "failed");
+    if (failed.length) {
+      setHint(`Sent to ${names}, but analyzing failed: ${failed[0].error || "Unknown error"}`, "failed");
+    } else {
+      setHint(`Sent to ${names}. Full resume analyze is running.`);
+    }
   } catch (error) {
-    els.hint.textContent = error.message || "Could not send this JD.";
+    setHint(`Sending failed: ${error.message || "Could not send this JD."}`, "failed");
   } finally {
-    if (els.send) els.send.disabled = selectedProfileIds().length === 0;
+    setSendBusy(false);
   }
 }
 
@@ -294,7 +467,8 @@ els.matches?.addEventListener("change", (event) => {
 });
 els.send?.addEventListener("click", () => {
   sendToLists().catch((error) => {
-    els.hint.textContent = error.message || "Could not send this JD.";
+    setHint(`Sending failed: ${error.message || "Could not send this JD."}`, "failed");
+    setSendBusy(false);
   });
 });
 
@@ -304,12 +478,12 @@ async function bootstrap() {
     state.users = Array.isArray(data.users) ? data.users : [];
     fillUsers();
     if (!state.users.length) {
-      els.hint.textContent = "Create a user and profiles on the Analyzer page first.";
+      setHint("Create a user and profiles on the Analyzer page first.");
       return;
     }
     if ((els.text?.value || "").trim().length >= 20) scheduleRank();
   } catch (error) {
-    els.hint.textContent = error.message || "Could not load users.";
+    setHint(`Could not load users: ${error.message || "Request failed."}`, "failed");
   }
 }
 

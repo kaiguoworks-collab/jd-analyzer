@@ -550,9 +550,22 @@ function profileForJob(job) {
   return state.profiles.find((item) => item.id === job?.profileId) || null;
 }
 
-function setModalStatus(message) {
+function setModalStatus(message, tone) {
   const status = document.getElementById("result-modal-status");
-  if (status) status.textContent = message || "";
+  if (!status) return;
+  if (!message) {
+    status.textContent = "";
+    return;
+  }
+  if (tone === "loading") {
+    status.innerHTML = `<span class="jd-status analyzing"><span class="spinner" aria-hidden="true"></span> ${escapeHtml(message)}</span>`;
+    return;
+  }
+  if (tone === "failed") {
+    status.innerHTML = `<span class="jd-status failed">${escapeHtml(message)}</span>`;
+    return;
+  }
+  status.textContent = message;
 }
 
 function setReanalyzeControls(job) {
@@ -560,7 +573,9 @@ function setReanalyzeControls(job) {
   if (!button) return;
   const busy = Boolean(job && state.reanalyzeJobIds.has(job.id));
   button.disabled = busy;
-  button.textContent = busy ? "Reanalyzing…" : "Reanalyze";
+  button.innerHTML = busy
+    ? `<span class="spinner" aria-hidden="true"></span> Reanalyzing…`
+    : "Reanalyze";
 }
 
 function mergeDashboardJob(current, saved) {
@@ -602,12 +617,17 @@ function fillResultModal(job) {
   if (!result || typeof result !== "object") {
     empty.classList.remove("hidden");
     body.classList.add("hidden");
-    if (busy) {
-      empty.innerHTML = `<strong>Reanalyzing</strong><span>Stay on this page. Results will update here when the analysis finishes.</span>`;
+    if (busy || job.status === "analyzing") {
+      empty.innerHTML = `<span class="spinner" aria-hidden="true"></span><strong>${busy ? "Reanalyzing" : "Analyzing…"}</strong><span>Stay on this page. Results will update here when the analysis finishes.</span>`;
+      empty.classList.add("is-loading");
+      empty.classList.remove("is-failed");
     } else if (job.status === "failed") {
       empty.innerHTML = `<strong>Analyzing failed</strong><span>${escapeHtml(job.error || "The analysis did not complete.")}</span>`;
+      empty.classList.add("is-failed");
+      empty.classList.remove("is-loading");
     } else {
       empty.innerHTML = `<strong>No analysis yet</strong><span>This job has no saved analyze result.</span>`;
+      empty.classList.remove("is-loading", "is-failed");
     }
     return;
   }
@@ -695,7 +715,7 @@ async function reanalyzeModalJob() {
   const jobId = job.id;
   state.reanalyzeJobIds.add(jobId);
   setReanalyzeControls(job);
-  setModalStatus("Reanalyzing… results will update in this modal.");
+  setModalStatus("Reanalyzing… results will update in this modal.", "loading");
   fillResultModal(job);
 
   try {
@@ -742,7 +762,7 @@ async function reanalyzeModalJob() {
     render();
     if (state.modalJobId === jobId) {
       if (current) fillResultModal(current);
-      setModalStatus(message);
+      setModalStatus(message, "failed");
     }
   } finally {
     state.reanalyzeJobIds.delete(jobId);

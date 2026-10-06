@@ -9,6 +9,8 @@ const els = {
   profileUser: document.getElementById("profile-user"),
   profileKeywordCloud: document.getElementById("profile-keyword-cloud"),
   profileRoleCloud: document.getElementById("profile-role-cloud"),
+  profileMainRole: document.getElementById("profile-main-role"),
+  profileLocation: document.getElementById("profile-location"),
   refreshKeywordsBtn: document.getElementById("refresh-keywords-btn"),
   profileResumeFile: document.getElementById("profile-resume-file"),
   profileResumeText: document.getElementById("profile-resume-text"),
@@ -278,14 +280,7 @@ function renderProfiles() {
       const button = document.createElement("button");
       button.type = "button";
       button.className = `profile-item${profile.id === state.activeProfileId ? " active" : ""}`;
-      const roleCount = Array.isArray(profile.roles) ? profile.roles.length : 0;
-      const keywordCount = Array.isArray(profile.keywords) ? profile.keywords.length : 0;
-      const tagNote = [
-        roleCount ? `${roleCount} role${roleCount === 1 ? "" : "s"}` : "",
-        keywordCount ? `${keywordCount} keyword${keywordCount === 1 ? "" : "s"}` : "",
-      ]
-        .filter(Boolean)
-        .join(" · ");
+      const tagNote = [profile.mainRole, profile.location].filter(Boolean).join(" · ");
       button.innerHTML = `
         <span>
           <b>${escapeHtml(profile.name)}</b>
@@ -376,10 +371,22 @@ function renderTagCloud(node, items, emptyText, tagClass) {
 
 function renderProfileKeywords(profile) {
   renderTagCloud(
+    els.profileMainRole,
+    profile?.mainRole ? [profile.mainRole] : [],
+    "Upload or paste a resume to extract the main role.",
+    "is-role"
+  );
+  renderTagCloud(
     els.profileRoleCloud,
     profile?.roles,
-    "Upload or paste a resume to extract role tags.",
+    "No extra roles such as AI/ML.",
     "is-role"
+  );
+  renderTagCloud(
+    els.profileLocation,
+    profile?.location ? [profile.location] : [],
+    "No region such as US California or Brazil found on this resume.",
+    ""
   );
   renderTagCloud(
     els.profileKeywordCloud,
@@ -1420,11 +1427,16 @@ function renderResults() {
     els.resultsEmpty.classList.remove("hidden");
     els.resultsBody.classList.add("hidden");
     if (selectedJd?.status === "analyzing") {
-      els.resultsEmpty.innerHTML = `<strong>Analyzing…</strong><span>Scoring this job description against the selected resume.</span>`;
+      els.resultsEmpty.innerHTML = `<span class="spinner" aria-hidden="true"></span><strong>Analyzing…</strong><span>Scoring this job description against the selected resume.</span>`;
+      els.resultsEmpty.classList.add("is-loading");
+      els.resultsEmpty.classList.remove("is-failed");
     } else if (selectedJd?.status === "failed") {
       els.resultsEmpty.innerHTML = `<strong>Analyzing failed</strong><span>${escapeHtml(selectedJd.error || "The analysis did not complete.")}</span>`;
+      els.resultsEmpty.classList.add("is-failed");
+      els.resultsEmpty.classList.remove("is-loading");
     } else {
       els.resultsEmpty.innerHTML = `<strong>No analysis yet</strong><span>Paste a job description and click Analyze. Open a completed item for the full breakdown.</span>`;
+      els.resultsEmpty.classList.remove("is-loading", "is-failed");
     }
     els.resultsSubtitle.textContent = "Overall is keyword and experience only. Location is scored separately.";
     if (els.companyFlagSlot) els.companyFlagSlot.innerHTML = "";
@@ -1504,6 +1516,8 @@ function mergeProfile(updated) {
   const next = {
     keywords: [],
     roles: [],
+    mainRole: "",
+    location: "",
     resumeText: "",
     resumeName: "",
     resumeType: "",
@@ -1957,6 +1971,8 @@ els.clearResumeBtn?.addEventListener("click", async () => {
     profile.hasFile = false;
     profile.keywords = [];
     profile.roles = [];
+    profile.mainRole = "";
+    profile.location = "";
     if (state.resumeObjectUrl) URL.revokeObjectURL(state.resumeObjectUrl);
     state.resumeObjectUrl = null;
     renderProfiles();

@@ -82,6 +82,8 @@ class Profile(db.Model):
     resume_path = db.Column(db.String(500), default="")
     keywords = db.Column(db.JSON, default=list)
     roles = db.Column(db.JSON, default=list)
+    main_role = db.Column(db.String(200), default="")
+    location = db.Column(db.String(200), default="")
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
     job_descriptions = db.relationship(
@@ -105,6 +107,8 @@ class Profile(db.Model):
             "hasFile": bool(self.resume_path),
             "keywords": self.keywords or [],
             "roles": self.roles or [],
+            "mainRole": self.main_role or "",
+            "location": self.location or "",
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
         }
