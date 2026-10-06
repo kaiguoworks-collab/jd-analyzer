@@ -105,7 +105,11 @@ function matchCard(item, sent) {
   const classes = ["intake-match"];
   if (item.topMatch && !sent) classes.push("is-top");
   if (sent) classes.push("is-sent");
-  const mainRole = item.mainRole || "No main role";
+  const mains = Array.isArray(item.mainRoles) && item.mainRoles.length
+    ? item.mainRoles
+    : item.mainRole
+      ? [item.mainRole]
+      : [];
   const location = item.location || "No location";
   return `
     <label class="${classes.join(" ")}">
@@ -120,7 +124,11 @@ function matchCard(item, sent) {
         <div class="tag-block">
           <span class="field-label">Main role</span>
           <div class="keyword-cloud">
-            <span class="tag is-role">${escapeHtml(mainRole)}</span>
+            ${
+              mains.length
+                ? mains.map((role) => `<span class="tag is-role">${escapeHtml(role)}</span>`).join("")
+                : `<span class="muted">No main role</span>`
+            }
             <span class="score-chip ${scoreTone(item.mainRoleScore)}">${Number(item.mainRoleScore) || 0}%</span>
           </div>
         </div>

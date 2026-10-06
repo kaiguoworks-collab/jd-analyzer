@@ -126,6 +126,9 @@ def init_db() -> None:
                 if "main_role" not in profile_columns:
                     db.session.execute(text("ALTER TABLE profiles ADD COLUMN main_role VARCHAR(200) DEFAULT ''"))
                     db.session.commit()
+                if "main_roles" not in profile_columns:
+                    db.session.execute(text("ALTER TABLE profiles ADD COLUMN main_roles JSON"))
+                    db.session.commit()
                 if "location" not in profile_columns:
                     db.session.execute(text("ALTER TABLE profiles ADD COLUMN location VARCHAR(200) DEFAULT ''"))
                     db.session.commit()
@@ -759,36 +762,131 @@ _SKILL_JUNK = {
     "power", "work", "working", "project", "experience", "engineer", "including",
 }
 
+ROLE_TAGS = (
+    "Full Stack Engineer",
+    "Frontend Engineer",
+    "Backend Engineer",
+    "Data Engineer",
+    "AI/ML Engineer",
+    "DevOps Engineer",
+)
+
 _ROLE_TAG_PATTERNS = [
-    ("Electrical Engineer", (r"electrical engineer", r"electrical engineering", r"\bsubstation\b", r"power system")),
-    ("Mechanical Engineer", (r"mechanical engineer", r"mechanical engineering")),
-    ("Civil Engineer", (r"civil engineer", r"civil engineering")),
-    ("Chemical Engineer", (r"chemical engineer", r"chemical engineering")),
-    ("Industrial Engineer", (r"industrial engineer", r"industrial engineering")),
-    ("Software Engineer", (r"software engineer", r"software engineering", r"full[- ]stack")),
-    ("Frontend Engineer", (r"frontend engineer", r"front-end engineer", r"front end engineer")),
-    ("Backend Engineer", (r"backend engineer", r"back-end engineer", r"back end engineer")),
-    ("Data Engineer", (r"data engineer", r"data engineering", r"data pipeline", r"\betl\b")),
-    ("Data Scientist", (r"data scientist", r"data science")),
-    ("Data Analyst", (r"data analyst", r"data analytics")),
-    ("AI/ML", (r"\bai/ml\b", r"machine learning", r"artificial intelligence", r"ml engineer", r"ai engineer", r"deep learning", r"\bllm\b")),
-    ("DevOps", (r"\bdevops\b", r"site reliability", r"\bsre\b")),
-    ("Product Manager", (r"product manager", r"product management")),
-    ("Project Manager", (r"project manager", r"project management", r"\bpm\b")),
-    ("Protection Engineer", (r"protection engineer", r"protection relay", r"relay settings")),
-    ("Power Systems", (r"power systems engineer", r"transmission", r"distribution engineer")),
+    ("Full Stack Engineer", (r"full[- ]stack", r"fullstack")),
+    ("Frontend Engineer", (r"front[- ]end engineer", r"frontend engineer", r"front end engineer", r"\bfrontend\b", r"\bfront-end\b", r"\bui engineer\b")),
+    ("Backend Engineer", (r"back[- ]end engineer", r"backend engineer", r"back end engineer", r"\bbackend\b", r"\bback-end\b")),
+    ("Data Engineer", (r"data engineer", r"data engineering", r"data pipeline", r"\betl\b", r"analytics engineer")),
+    ("AI/ML Engineer", (r"\bai/ml\b", r"machine learning", r"\bml engineer\b", r"\bai engineer\b", r"deep learning", r"\bllm\b")),
+    ("DevOps Engineer", (r"\bdevops\b", r"site reliability", r"\bsre\b", r"platform engineer")),
 ]
+
+_ROLE_ALIASES = {
+    "full stack engineer": "Full Stack Engineer",
+    "full-stack engineer": "Full Stack Engineer",
+    "fullstack engineer": "Full Stack Engineer",
+    "full stack": "Full Stack Engineer",
+    "frontend engineer": "Frontend Engineer",
+    "front-end engineer": "Frontend Engineer",
+    "front end engineer": "Frontend Engineer",
+    "frontend": "Frontend Engineer",
+    "backend engineer": "Backend Engineer",
+    "back-end engineer": "Backend Engineer",
+    "back end engineer": "Backend Engineer",
+    "backend": "Backend Engineer",
+    "data engineer": "Data Engineer",
+    "ai/ml engineer": "AI/ML Engineer",
+    "ai ml engineer": "AI/ML Engineer",
+    "ai/ml": "AI/ML Engineer",
+    "ai ml": "AI/ML Engineer",
+    "ml engineer": "AI/ML Engineer",
+    "ai engineer": "AI/ML Engineer",
+    "machine learning engineer": "AI/ML Engineer",
+    "devops engineer": "DevOps Engineer",
+    "dev ops engineer": "DevOps Engineer",
+    "devops": "DevOps Engineer",
+    "sre": "DevOps Engineer",
+}
+
+
+def canonical_role(value: str) -> str:
+    text = " ".join(str(value or "").strip().lower().replace("-", " ").replace("/", " ").split())
+    if not text:
+        return ""
+    if text in _ROLE_ALIASES:
+        return _ROLE_ALIASES[text]
+    slashed = " ".join(str(value or "").strip().lower().replace("-", " ").split())
+    return _ROLE_ALIASES.get(slashed, "")
+
+
+def canonical_role_list(values) -> list[str]:
+    found = []
+    for item in values or []:
+        role = canonical_role(item)
+        if role and role not in found:
+            found.append(role)
+    return found
+
+
+def _role_pattern_score(text: str) -> list[tuple[str, int, int]]:
+    lowered = (text or "").lower()
+    scored = []
+    for label, patterns in _ROLE_TAG_PATTERNS:
+        positions = []
+        for pattern in patterns:
+            match = re.search(pattern, lowered)
+            if match:
+                positions.append(match.start())
+        if positions:
+            scored.append((label, len(positions), min(positions)))
+    return scored
+
+
+def classify_roles(text: str) -> tuple[str, list[str]]:
+    raw = text or ""
+    if not raw.strip():
+        return "", []
+    head = raw[:1200]
+    head_scores = {label: (count, pos) for label, count, pos in _role_pattern_score(head)}
+    body_scores = {label: (count, pos) for label, count, pos in _role_pattern_score(raw)}
+    labels = [label for label, _patterns in _ROLE_TAG_PATTERNS]
+    ranked = []
+    for label in labels:
+        head_count, head_pos = head_scores.get(label, (0, 10**9))
+        body_count, _body_pos = body_scores.get(label, (0, 10**9))
+        if head_count or body_count:
+            ranked.append((head_count, -head_pos if head_count else -10**9, body_count, label))
+    if not ranked and re.search(r"\bsoftware engineer\b", head.lower()):
+        front = bool(re.search(r"front[- ]end|react|vue|angular", head.lower()))
+        back = bool(re.search(r"back[- ]end|\bapis?\b|microservice", head.lower()))
+        guessed = ""
+        if front and back:
+            guessed = "Full Stack Engineer"
+        elif back:
+            guessed = "Backend Engineer"
+        elif front:
+            guessed = "Frontend Engineer"
+        elif re.search(r"machine learning|\bai/ml\b", head.lower()):
+            guessed = "AI/ML Engineer"
+        elif re.search(r"data pipeline|\betl\b", head.lower()):
+            guessed = "Data Engineer"
+        elif re.search(r"\bdevops\b", head.lower()):
+            guessed = "DevOps Engineer"
+        if guessed:
+            ranked.append((1, 0, 1, guessed))
+    if not ranked:
+        return "", []
+    ranked.sort(reverse=True)
+    headered = [item for item in ranked if item[0] > 0]
+    main = (headered or ranked)[0][3]
+    others = [item[3] for item in ranked if item[3] != main]
+    return main, others[:5]
 
 
 def fallback_resume_roles(resume_text: str) -> list[str]:
-    blob = (resume_text or "").lower()
-    if not blob.strip():
-        return []
-    tags = []
-    for label, patterns in _ROLE_TAG_PATTERNS:
-        if any(re.search(pattern, blob) for pattern in patterns):
-            tags.append(label)
-    return tags[:8]
+    main, others = classify_roles(resume_text)
+    if not main:
+        return others
+    return [main, *others]
 
 
 def fallback_location(resume_text: str) -> str:
@@ -796,17 +894,37 @@ def fallback_location(resume_text: str) -> str:
 
 
 def fallback_profile_focus(resume_text: str) -> tuple[str, list[str], str]:
-    tags = fallback_resume_roles(resume_text)
-    head = (resume_text or "")[:900].lower()
-    main = ""
-    for label, patterns in _ROLE_TAG_PATTERNS:
-        if any(re.search(pattern, head) for pattern in patterns):
-            main = label
-            break
-    if not main and tags:
-        main = tags[0]
-    others = [tag for tag in tags if tag.lower() != main.lower()]
-    return main, others[:5], fallback_location(resume_text)
+    main, others = classify_roles(resume_text)
+    return main, others, fallback_location(resume_text)
+
+
+def profile_main_roles(profile: Profile) -> list[str]:
+    stored = canonical_role_list(getattr(profile, "main_roles", None) or [])
+    if stored:
+        return stored
+    one = canonical_role(getattr(profile, "main_role", "") or "")
+    return [one] if one else []
+
+
+def set_profile_roles(profile: Profile, main_roles, other_roles) -> None:
+    mains = canonical_role_list(main_roles)
+    others = [role for role in canonical_role_list(other_roles) if role not in mains]
+    profile.main_roles = mains
+    profile.main_role = mains[0] if mains else ""
+    profile.roles = others
+
+
+def roles_need_remap(profile: Profile) -> bool:
+    labels = [str(item).strip() for item in (profile.roles or []) if str(item).strip()]
+    if str(profile.main_role or "").strip():
+        labels.append(str(profile.main_role).strip())
+    extra = getattr(profile, "main_roles", None) or []
+    if isinstance(extra, list):
+        labels.extend(str(item).strip() for item in extra if str(item).strip())
+    if not labels:
+        return False
+    allowed = set(ROLE_TAGS)
+    return any(item not in allowed for item in labels)
 
 
 def fallback_resume_keywords(resume_text: str) -> list[str]:
@@ -837,14 +955,15 @@ def looks_like_skill_keywords(keywords) -> bool:
     return False
 
 
-def extract_profile_tags(resume_text: str) -> tuple[str, list[str], str, list[str]]:
+def extract_profile_tags(resume_text: str) -> tuple[list[str], list[str], str, list[str]]:
     text = clip(resume_text)
     if not text.strip():
-        return "", [], "", []
+        return [], [], "", []
     main_role, roles, location = fallback_profile_focus(text)
+    mains = [main_role] if main_role else []
     keywords = fallback_resume_keywords(text)
     if not os.getenv("OPENAI_API_KEY"):
-        return main_role, roles, location, keywords
+        return mains, roles, location, keywords
     try:
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=45.0)
         completion = client.chat.completions.create(
@@ -856,10 +975,12 @@ def extract_profile_tags(resume_text: str) -> tuple[str, list[str], str, list[st
                     "role": "system",
                     "content": (
                         "Read the resume and return JSON only with this shape:\n"
-                        '{"mainRole":"Backend Engineer","roles":["AI/ML"],"location":"US California","keywords":["Python"]}\n'
-                        "mainRole: exactly one primary job this resume is built around, such as Backend Engineer or Electrical Engineer. "
-                        "Not a skill, tool, company, or a list.\n"
-                        "roles: up to 5 other real specialties, such as AI/ML. Do not repeat mainRole. Do not list every past title.\n"
+                        '{"mainRoles":["Backend Engineer"],"roles":["AI/ML Engineer"],"location":"US California","keywords":["Python"]}\n'
+                        "mainRoles and roles may use ONLY these titles: Backend Engineer, Frontend Engineer, "
+                        "Data Engineer, AI/ML Engineer, DevOps Engineer, Full Stack Engineer. "
+                        "mainRoles: the roles this resume is built around. One is enough; use more only when the resume is clearly more than one of those jobs. "
+                        "roles: the other titles from that same list that are real secondary work. Do not repeat a main role. "
+                        "Never invent Software Engineer, Data Scientist, or any title outside the list. Use an empty list when none fit.\n"
                         "location: region only, never a city. US profiles are \"US\" plus the state, such as \"US California\" or \"US Texas\". "
                         "Use \"US\" when the country is the United States but no state is given. "
                         "Every other country is the country name only, such as \"Brazil\" or \"Canada\". Empty string if the resume never says.\n"
@@ -870,25 +991,29 @@ def extract_profile_tags(resume_text: str) -> tuple[str, list[str], str, list[st
             ],
         )
         parsed = json.loads(completion.choices[0].message.content or "{}")
-        parsed_main = str(parsed.get("mainRole") or "").strip()[:200]
-        parsed_roles = parse_keywords(parsed.get("roles"), limit=5)
+        parsed_mains = parsed.get("mainRoles")
+        if not isinstance(parsed_mains, list):
+            parsed_mains = [parsed.get("mainRole")] if parsed.get("mainRole") else []
+        parsed_main_list = canonical_role_list(parsed_mains)
+        parsed_roles = canonical_role_list(parse_keywords(parsed.get("roles"), limit=6))
         parsed_location = str(parsed.get("location") or "").strip()[:200]
         parsed_keywords = parse_keywords(parsed.get("keywords"), limit=24)
-        if parsed_main:
-            main_role = parsed_main
-        elif parsed_roles:
-            main_role = parsed_roles[0]
-        roles = [item for item in (parsed_roles or roles) if item.lower() != main_role.lower()]
+        if parsed_main_list or parsed_roles:
+            if parsed_main_list:
+                mains = parsed_main_list
+            else:
+                mains = [parsed_roles[0]]
+                parsed_roles = parsed_roles[1:]
+            roles = [role for role in parsed_roles if role not in mains][:5]
         location = canonicalize_location(parsed_location) or location
-        return main_role, roles[:5], location, parsed_keywords or keywords
+        return mains, roles, location, parsed_keywords or keywords
     except Exception:
-        return main_role, roles, location, keywords
+        return mains, roles, location, keywords
 
 
 def refresh_profile_keywords(profile: Profile) -> list[str]:
-    main_role, roles, location, keywords = extract_profile_tags(profile.resume_text or "")
-    profile.main_role = main_role[:200]
-    profile.roles = [item for item in roles if item.lower() != main_role.lower()]
+    mains, roles, location, keywords = extract_profile_tags(profile.resume_text or "")
+    set_profile_roles(profile, mains, roles)
     profile.location = canonicalize_location(location)[:200]
     profile.keywords = keywords
     return keywords
@@ -897,7 +1022,7 @@ def refresh_profile_keywords(profile: Profile) -> list[str]:
 def needs_tag_refresh(profile: Profile) -> bool:
     if not (profile.resume_text or "").strip():
         return False
-    if not str(profile.main_role or "").strip():
+    if roles_need_remap(profile) or not profile_main_roles(profile):
         return True
     location = str(profile.location or "").strip()
     if location and not is_region_location(location):
@@ -923,13 +1048,20 @@ def prepare_profile_for_match(profile: Profile) -> bool:
     if location != (profile.location or ""):
         profile.location = location
         changed = True
-    if not str(profile.main_role or "").strip():
+    if roles_need_remap(profile) or not profile_main_roles(profile):
         main_role, roles, _location = fallback_profile_focus(resume)
-        if main_role:
-            profile.main_role = main_role[:200]
-            changed = True
-        if main_role and not profile.roles and roles:
-            profile.roles = roles
+        before = (
+            profile.main_role or "",
+            list(profile.roles or []),
+            list(profile.main_roles or []),
+        )
+        set_profile_roles(profile, [main_role] if main_role else [], roles)
+        after = (
+            profile.main_role or "",
+            list(profile.roles or []),
+            list(profile.main_roles or []),
+        )
+        if before != after:
             changed = True
     if not profile.keywords:
         profile.keywords = fallback_resume_keywords(resume)
@@ -989,50 +1121,37 @@ def match_terms(terms, jd_blob: str) -> tuple[list[str], list[str], int]:
 
 
 _ROLE_FAMILIES = [
-    ("backend engineer", "backend"),
-    ("back-end engineer", "backend"),
+    ("full stack engineer", "fullstack"),
+    ("full-stack engineer", "fullstack"),
+    ("fullstack engineer", "fullstack"),
     ("frontend engineer", "frontend"),
     ("front-end engineer", "frontend"),
-    ("full stack", "fullstack"),
-    ("full-stack", "fullstack"),
-    ("software engineer", "software"),
+    ("backend engineer", "backend"),
+    ("back-end engineer", "backend"),
     ("data engineer", "data-eng"),
-    ("data scientist", "data-science"),
-    ("data analyst", "data-analyst"),
+    ("ai/ml engineer", "ai"),
     ("ai/ml", "ai"),
     ("machine learning", "ai"),
-    ("ml engineer", "ai"),
-    ("ai engineer", "ai"),
-    ("electrical engineer", "electrical"),
-    ("mechanical engineer", "mechanical"),
-    ("civil engineer", "civil"),
-    ("chemical engineer", "chemical"),
-    ("protection engineer", "protection"),
-    ("power systems", "power"),
+    ("devops engineer", "devops"),
     ("devops", "devops"),
-    ("product manager", "product"),
-    ("project manager", "project"),
 ]
 
 _FAMILY_FIT = {
-    frozenset({"backend", "software"}): 64,
-    frozenset({"frontend", "software"}): 64,
-    frozenset({"fullstack", "software"}): 74,
     frozenset({"fullstack", "backend"}): 70,
     frozenset({"fullstack", "frontend"}): 70,
     frozenset({"backend", "frontend"}): 28,
-    frozenset({"data-eng", "data-science"}): 58,
-    frozenset({"data-eng", "data-analyst"}): 46,
-    frozenset({"data-science", "ai"}): 72,
-    frozenset({"data-eng", "ai"}): 50,
+    frozenset({"data-eng", "ai"}): 55,
     frozenset({"backend", "ai"}): 42,
-    frozenset({"software", "ai"}): 40,
-    frozenset({"software", "data-eng"}): 36,
-    frozenset({"electrical", "power"}): 70,
-    frozenset({"electrical", "protection"}): 68,
-    frozenset({"power", "protection"}): 64,
-    frozenset({"devops", "backend"}): 40,
-    frozenset({"devops", "software"}): 38,
+    frozenset({"fullstack", "ai"}): 40,
+    frozenset({"backend", "data-eng"}): 36,
+    frozenset({"fullstack", "data-eng"}): 34,
+    frozenset({"frontend", "data-eng"}): 18,
+    frozenset({"devops", "backend"}): 42,
+    frozenset({"devops", "fullstack"}): 38,
+    frozenset({"devops", "frontend"}): 22,
+    frozenset({"devops", "data-eng"}): 36,
+    frozenset({"devops", "ai"}): 30,
+    frozenset({"frontend", "ai"}): 24,
 }
 
 
@@ -1058,13 +1177,8 @@ def role_fit_score(profile_role: str, jd_role: str) -> int:
 
 
 def detect_jd_role(jd_text: str) -> str:
-    head = (jd_text or "")[:1200].lower()
-    body = (jd_text or "").lower()
-    for source in (head, body):
-        for label, patterns in _ROLE_TAG_PATTERNS:
-            if any(re.search(pattern, source) for pattern in patterns):
-                return label
-    return ""
+    main, _others = classify_roles(jd_text or "")
+    return main
 
 
 _COUNTRIES = (
@@ -1266,15 +1380,17 @@ def additional_role_fit(role: str, jd_role: str, jd_text: str) -> int:
 
 
 def fallback_focus_scores(profile: Profile, jd_text: str, jd_role: str) -> dict:
-    main_role = str(profile.main_role or "").strip()
-    roles = [str(item).strip() for item in (profile.roles or []) if str(item).strip()]
+    main_roles = profile_main_roles(profile)
+    roles = canonical_role_list(profile.roles or [])
     additional = [
         {"role": role, "score": additional_role_fit(role, jd_role, jd_text)}
         for role in roles
+        if role not in main_roles
     ]
+    main_score = max((role_fit_score(role, jd_role) for role in main_roles), default=0)
     status, note = location_fit(profile.location or "", jd_text)
     return {
-        "mainRoleScore": role_fit_score(main_role, jd_role),
+        "mainRoleScore": main_score,
         "additionalRoles": additional,
         "locationMatch": status,
         "locationNote": note,
@@ -1370,7 +1486,8 @@ def rank_profiles_for_jd(profiles, jd_text: str) -> tuple[list[dict], dict]:
         keywords = [str(item).strip() for item in (profile.keywords or []) if str(item).strip()]
         matched_keywords, missed_keywords, keyword_score = match_terms(keywords, blob)
         scored = fallback_focus_scores(profile, jd_text, jd_role)
-        main_role = str(profile.main_role or "").strip()
+        main_roles = profile_main_roles(profile)
+        main_role = main_roles[0] if main_roles else ""
         main_score = clamp_score(scored.get("mainRoleScore"))
         additional = scored.get("additionalRoles") or []
         known_roles = {item.lower(): item for item in (profile.roles or [])}
@@ -1395,6 +1512,7 @@ def rank_profiles_for_jd(profiles, jd_text: str) -> tuple[list[dict], dict]:
                 "userId": profile.user_id or "",
                 "userName": profile.user.name if profile.user else "",
                 "mainRole": main_role,
+                "mainRoles": main_roles,
                 "mainRoleScore": main_score,
                 "roles": [item.get("role") for item in additional if item.get("role")],
                 "additionalRoles": additional,
@@ -1701,6 +1819,16 @@ def health():
 @app.get("/api/users")
 def list_users():
     users = db.session.execute(db.select(User).order_by(User.created_at.asc())).scalars().all()
+    changed = False
+    for user in users:
+        for profile in user.profiles:
+            if not roles_need_remap(profile):
+                continue
+            main_role, roles, _location = fallback_profile_focus(profile.resume_text or "")
+            set_profile_roles(profile, [main_role] if main_role else [], roles)
+            changed = True
+    if changed:
+        db.session.commit()
     return jsonify({"users": [user.to_dict(include_profiles=True) for user in users]})
 
 
@@ -1810,8 +1938,15 @@ def update_profile(profile_id: str):
         profile.resume_type = str(body.get("resumeType") or "")[:200]
     if "keywords" in body:
         profile.keywords = parse_keywords(body.get("keywords"), limit=24)
-    if "roles" in body:
-        profile.roles = parse_keywords(body.get("roles"), limit=8)
+    if "mainRoles" in body or "mainRole" in body or "roles" in body:
+        if "mainRoles" in body:
+            mains = body.get("mainRoles")
+        elif "mainRole" in body:
+            mains = [body.get("mainRole")]
+        else:
+            mains = profile_main_roles(profile)
+        others = body.get("roles") if "roles" in body else (profile.roles or [])
+        set_profile_roles(profile, mains, others)
     if body.get("clearResume"):
         delete_resume_file(profile)
         profile.resume_text = ""
@@ -1820,6 +1955,7 @@ def update_profile(profile_id: str):
         profile.keywords = []
         profile.roles = []
         profile.main_role = ""
+        profile.main_roles = []
         profile.location = ""
     profile.updated_at = utcnow()
     db.session.commit()

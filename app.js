@@ -113,7 +113,23 @@ const state = {
   checkedDiscardedIds: new Set(),
   applyHistory: [],
   analyzeControllers: new Map(),
+  collapsedUserIds: new Set(readCollapsedUsers()),
 };
+
+function readCollapsedUsers() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem("jd-collapsed-users") || "[]");
+    return Array.isArray(saved) ? saved : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function setUserCollapsed(userId, collapsed) {
+  if (collapsed) state.collapsedUserIds.add(userId);
+  else state.collapsedUserIds.delete(userId);
+  sessionStorage.setItem("jd-collapsed-users", JSON.stringify([...state.collapsedUserIds]));
+}
 
 function uid() {
   return `jd-${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 12)}`;
@@ -242,9 +258,20 @@ function renderProfiles() {
     group.className = "user-group";
     group.dataset.userId = user.id;
     bindUserDropTarget(group, user.id);
+    const collapsed = state.collapsedUserIds.has(user.id);
+    if (collapsed) group.classList.add("is-collapsed");
     const head = document.createElement("div");
     head.className = "user-group-head";
-    head.innerHTML = `<strong>${escapeHtml(user.name)}</strong>`;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "user-group-toggle";
+    toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    toggle.innerHTML = `<span class="user-chevron" aria-hidden="true"></span><strong>${escapeHtml(user.name)}</strong>`;
+    toggle.addEventListener("click", () => {
+      setUserCollapsed(user.id, !state.collapsedUserIds.has(user.id));
+      renderProfiles();
+    });
+    head.appendChild(toggle);
     const actions = document.createElement("div");
     actions.className = "user-group-actions";
     const editUser = document.createElement("button");
@@ -270,17 +297,20 @@ function renderProfiles() {
     group.appendChild(head);
 
     const profiles = state.profiles.filter((profile) => profile.userId === user.id);
+    const profileBox = document.createElement("div");
+    profileBox.className = "user-group-profiles";
     if (!profiles.length) {
       const empty = document.createElement("p");
       empty.className = "muted user-group-empty";
       empty.textContent = "No profiles yet.";
-      group.appendChild(empty);
+      profileBox.appendChild(empty);
     }
     profiles.forEach((profile) => {
       const button = document.createElement("button");
       button.type = "button";
       button.className = `profile-item${profile.id === state.activeProfileId ? " active" : ""}`;
-      const tagNote = [profile.mainRole, profile.location].filter(Boolean).join(" · ");
+      const mains = mainRoleList(profile);
+      const tagNote = [mains.join(", "), profile.location].filter(Boolean).join(" · ");
       button.innerHTML = `
         <span>
           <b>${escapeHtml(profile.name)}</b>
@@ -313,8 +343,9 @@ function renderProfiles() {
         removeProfile(profile.id);
       });
       button.appendChild(remove);
-      group.appendChild(button);
+      profileBox.appendChild(button);
     });
+    group.appendChild(profileBox);
     els.profileList.appendChild(group);
   });
 }
@@ -332,7 +363,8 @@ function bindUserDropTarget(group, userId) {
     event.preventDefault();
     group.classList.remove("is-drop-target");
     const profileId = event.dataTransfer.getData("text/plain");
-    if (profileId) moveProfileToUser(profileId, userId);
+    if (!profileId || profileId.startsWith("role\t")) return;
+    moveProfileToUser(profileId, userId);
   });
 }
 
@@ -369,18 +401,95 @@ function renderTagCloud(node, items, emptyText, tagClass) {
     : `<span class="muted">${escapeHtml(emptyText)}</span>`;
 }
 
+function mainRoleList(profile) {
+  if (Array.isArray(profile?.mainRoles) && profile.mainRoles.length) return profile.mainRoles.filter(Boolean);
+  return profile?.mainRole ? [profile.mainRole] : [];
+}
+
+function renderRoleBucket(node, roles, bucket, emptyText) {
+  if (!node) return;
+  node.dataset.roleBucket = bucket;
+  const tags = Array.isArray(roles) ? roles.filter(Boolean) : [];
+  node.innerHTML = tags.length
+    ? ""
+    : `<span class="muted">${escapeHtml(emptyText)}</span>`;
+  tags.forEach((role) => {
+    const chip = document.createElement("span");
+    chip.className = "tag is-role";
+    chip.draggable = true;
+    chip.textContent = role;
+    chip.addEventListener("dragstart", (event) => {
+      event.stopPropagation();
+      event.dataTransfer.setData("text/plain", `role\t${bucket}\t${role}`);
+      event.dataTransfer.effectAllowed = "move";
+      chip.classList.add("is-dragging");
+    });
+    chip.addEventListener("dragend", () => chip.classList.remove("is-dragging"));
+    node.appendChild(chip);
+  });
+  bindRoleBucket(node);
+}
+
+function bindRoleBucket(node) {
+  if (!node || node.dataset.roleDrop === "1") return;
+  node.dataset.roleDrop = "1";
+  node.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    node.classList.add("is-drop-target");
+  });
+  node.addEventListener("dragleave", (event) => {
+    if (!node.contains(event.relatedTarget)) node.classList.remove("is-drop-target");
+  });
+  node.addEventListener("drop", (event) => {
+    const payload = event.dataTransfer.getData("text/plain");
+    if (!payload.startsWith("role\t")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    node.classList.remove("is-drop-target");
+    const [, from, role] = payload.split("\t");
+    if (role) moveRoleTag(role, from, node.dataset.roleBucket);
+  });
+}
+
+async function moveRoleTag(role, from, to) {
+  const profile = activeProfile();
+  if (!profile || !role || from === to || (to !== "main" && to !== "other")) return;
+  const mains = mainRoleList(profile).filter((item) => item !== role);
+  const others = (Array.isArray(profile.roles) ? profile.roles : []).filter((item) => item !== role);
+  if (to === "main") mains.push(role);
+  else others.push(role);
+  profile.mainRoles = mains;
+  profile.mainRole = mains[0] || "";
+  profile.roles = others;
+  renderProfileKeywords(profile);
+  renderProfiles();
+  try {
+    const data = await apiJson(`/api/profiles/${profile.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mainRoles: mains, roles: others, log: false }),
+    });
+    if (data.profile) mergeProfile(data.profile);
+    renderProfileKeywords(activeProfile());
+    renderProfiles();
+  } catch (error) {
+    els.analyzeHint.textContent = error.message || "Could not move that role.";
+  }
+}
+
 function renderProfileKeywords(profile) {
-  renderTagCloud(
+  renderRoleBucket(
     els.profileMainRole,
-    profile?.mainRole ? [profile.mainRole] : [],
-    "Upload or paste a resume to extract the main role.",
-    "is-role"
+    mainRoleList(profile),
+    "main",
+    "Upload or paste a resume to extract the main role."
   );
-  renderTagCloud(
+  renderRoleBucket(
     els.profileRoleCloud,
     profile?.roles,
-    "No extra roles such as AI/ML.",
-    "is-role"
+    "other",
+    "No other roles from the six role tags."
   );
   renderTagCloud(
     els.profileLocation,
@@ -1972,6 +2081,7 @@ els.clearResumeBtn?.addEventListener("click", async () => {
     profile.keywords = [];
     profile.roles = [];
     profile.mainRole = "";
+    profile.mainRoles = [];
     profile.location = "";
     if (state.resumeObjectUrl) URL.revokeObjectURL(state.resumeObjectUrl);
     state.resumeObjectUrl = null;

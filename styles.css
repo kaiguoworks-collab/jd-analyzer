@@ -290,6 +290,47 @@ p {
   padding: 0 2px;
 }
 
+.user-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.user-chevron {
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg);
+  margin-top: -3px;
+  flex: 0 0 auto;
+}
+
+.user-group.is-collapsed .user-chevron {
+  transform: rotate(-45deg);
+  margin-top: 0;
+}
+
+.user-group.is-collapsed .user-group-profiles {
+  display: none;
+}
+
+.user-group-profiles {
+  display: grid;
+  gap: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .user-group-head strong {
   font-size: 13px;
   letter-spacing: 0.03em;
@@ -353,6 +394,17 @@ p {
 .tag.is-role {
   background: #e8f3ef;
   color: var(--teal-deep);
+  cursor: grab;
+}
+
+.tag.is-role.is-dragging {
+  opacity: 0.45;
+}
+
+.keyword-cloud.is-drop-target {
+  outline: 1px dashed var(--teal);
+  background: #f3faf7;
+  border-radius: 10px;
 }
 
 .tag.is-skill {
